@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { getDb, json, methodNotAllowed, handleError, currentUser } from '../_lib/db.js';
+import { getDb, json, methodNotAllowed, handleError, currentUser } from '../db.js';
 
 const rows=(value)=>Array.isArray(value)?value:[];
 const id=(value)=>typeof value==='string'&&value.length>0&&value.length<=200?value:null;

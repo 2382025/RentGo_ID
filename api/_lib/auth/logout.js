@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { getDb, getCookie, json, methodNotAllowed, handleError, clearSessionCookie } from '../_lib/db.js';
+import { getDb, getCookie, json, methodNotAllowed, handleError, clearSessionCookie } from '../db.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);

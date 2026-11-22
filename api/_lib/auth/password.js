@@ -1,5 +1,5 @@
 import bcrypt from 'bcryptjs';
-import { getDb, json, methodNotAllowed, handleError, currentUser } from '../_lib/db.js';
+import { getDb, json, methodNotAllowed, handleError, currentUser } from '../db.js';
 
 export default async function handler(req,res){
   if(req.method!=='POST')return methodNotAllowed(res,['POST']);

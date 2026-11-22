@@ -73,6 +73,6 @@ Sign in to the new app as admin, open **Lainnya → Pengaturan → Data → Impo
 
 ## GitHub
 
-The frontend loads data from `GET /api/data` and sends changed records through authenticated `PUT /api/state`. Focused endpoints also exist for rentals, chats, reviews, notifications, commissions, profile, and withdrawals. These routes enforce account ownership and role checks before writing to Neon.
+The frontend loads data from `GET /api/data` and sends changed records through authenticated `PUT /api/state`. Focused endpoints also exist for rentals, chats, reviews, and withdrawals. Authentication actions share `/api/auth/:action`, and admin actions share `/api/admin/:action` to stay within Vercel Hobby's function-count limit. Other account, notification, commission, profile, and settings changes use `/api/state`. These routes enforce account ownership and role checks before writing to Neon.
 
 Commit `index.html`, `api/`, `database/`, `scripts/`, `package.json`, `package-lock.json` (after `npm install`), `vercel.json`, `.gitignore`, `.env.example`, and this README. Never commit database credentials.
