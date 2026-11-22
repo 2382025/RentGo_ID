@@ -5,7 +5,7 @@ import { getDb, json, methodNotAllowed, handleError, sessionCookie } from '../_l
 export default async function handler(req, res) {
   if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
   try {
-    const { name, email, password, role } = req.body || {};
+    const { name, email, password, role, phone, bank } = req.body || {};
     if (typeof name !== 'string' || name.trim().length < 2 || name.trim().length > 100 ||
         typeof email !== 'string' || !/^\S+@\S+\.\S+$/.test(email) ||
         typeof password !== 'string' || password.length < 8 || password.length > 72 ||
@@ -15,11 +15,15 @@ export default async function handler(req, res) {
     const sql = getDb();
     const passwordHash = await bcrypt.hash(password, 12);
     const id = randomBytes(16).toString('hex');
+    if (phone !== undefined && (typeof phone !== 'string' || phone.length > 40)) return json(res, 400, { error: 'Phone number is invalid.' });
+    if (role === 'seller' && (!bank || typeof bank.bankName !== 'string' || !bank.bankName.trim() || typeof bank.accountNumber !== 'string' || !bank.accountNumber.trim() || typeof bank.accountHolder !== 'string' || !bank.accountHolder.trim())) {
+      return json(res, 400, { error: 'Seller bank details are required.' });
+    }
     const [user] = await sql`
-      INSERT INTO users (id, name, email, password_hash, role)
-      VALUES (${id}, ${name.trim()}, ${email.trim().toLowerCase()}, ${passwordHash}, ${role})
+      INSERT INTO users (id, name, email, password_hash, role, phone, bank_name, account_number, account_holder)
+      VALUES (${id}, ${name.trim()}, ${email.trim().toLowerCase()}, ${passwordHash}, ${role}, ${phone || ''}, ${bank?.bankName || null}, ${bank?.accountNumber || null}, ${bank?.accountHolder || null})
       ON CONFLICT (email) DO NOTHING
-      RETURNING id, name, email, role
+      RETURNING id, name, email, role, phone, bank_name AS "bankName", account_number AS "accountNumber", account_holder AS "accountHolder"
     `;
     if (!user) return json(res, 409, { error: 'An account with this email already exists.' });
     const token = randomBytes(32).toString('hex');

@@ -8,7 +8,7 @@ export default async function handler(req, res) {
     const { email, password } = req.body || {};
     if (typeof email !== 'string' || typeof password !== 'string') return json(res, 400, { error: 'Email and password are required.' });
     const sql = getDb();
-    const [user] = await sql`SELECT id, name, email, role, password_hash FROM users WHERE email = ${email.trim().toLowerCase()}`;
+    const [user] = await sql`SELECT id, name, email, role, phone, bank_name AS "bankName", account_number AS "accountNumber", account_holder AS "accountHolder", password_hash FROM users WHERE email = ${email.trim().toLowerCase()}`;
     if (!user || !(await bcrypt.compare(password, user.password_hash))) return json(res, 401, { error: 'Invalid email or password.' });
     const token = randomBytes(32).toString('hex');
     const tokenHash = createHash('sha256').update(token).digest('hex');

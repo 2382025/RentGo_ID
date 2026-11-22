@@ -798,6 +798,28 @@ function exportRentalsCSV(scope='buyer'){
 /* ============================================================
    AUTH
    ============================================================ */
+async function apiRequest(path,options={}){
+  const response=await fetch(path,{credentials:'same-origin',headers:{'Content-Type':'application/json',...(options.headers||{})},...options});
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok)throw new Error(data.error||`API request failed (${response.status})`);
+  return data;
+}
+function rememberApiUser(user){
+  const existing=state.users.find(u=>u.id===user.id);
+  const normalized={...existing,...user,apiManaged:true,phone:user.phone||'',bank:user.bank||(user.bankName?{bankName:user.bankName,accountNumber:user.accountNumber,accountHolder:user.accountHolder}:existing?.bank),balance:existing?.balance||0};
+  state.users=state.users.filter(u=>u.id!==user.id);
+  state.users.push(normalized);
+  state.currentUser=normalized;
+  saveState();
+}
+async function syncBackend(){
+  try{
+    const [session,listings]=await Promise.all([apiRequest('/api/auth/me'),apiRequest('/api/motors')]);
+    if(session.user){rememberApiUser(session.user);}
+    state.motors=listings.motors||[];
+    render();
+  }catch(error){console.info('RentGo API is not connected yet:',error.message);}
+}
 function renderAuth(){
   document.getElementById('app').innerHTML=`
     <div class="auth-wrap">
@@ -827,7 +849,7 @@ function renderAuth(){
             <div class="form-group"><label>No. WhatsApp</label><input type="tel" id="regPhone" placeholder="0812-xxxx-xxxx"></div>
           </div>
           <div class="form-group"><label>Email</label><input type="email" id="authEmail" placeholder="nama@email.com"></div>
-          <div class="form-group"><label>Password</label><input type="password" id="authPassword" placeholder="Minimal 6 karakter"></div>
+          <div class="form-group"><label>Password</label><input type="password" id="authPassword" placeholder="Minimal 8 karakter"></div>
           <div id="bankFields" class="hidden">
             <div class="form-section">
               <div class="section-label"><i class="fa-solid fa-building-columns"></i> Data Rekening Payout</div>
@@ -888,34 +910,40 @@ function renderAuth(){
     }
     updateRoleUI();
   };
-  document.getElementById('authSubmit').onclick=()=>{
+  document.getElementById('authSubmit').onclick=async()=>{
     const email=document.getElementById('authEmail').value.trim().toLowerCase();
     const password=document.getElementById('authPassword').value;
     if(!email||!password){toast('Email dan password wajib diisi','error');return;}
-    if(password.length<6&&mode==='register'){toast('Password minimal 6 karakter','error');return;}
+    if(password.length<8&&mode==='register'){toast('Password minimal 8 karakter','error');return;}
     if(mode==='login'){
-      const user=state.users.find(u=>u.email===email&&u.password===password&&(u.role===selectedRole||u.role==='admin'));
-      if(!user){toast('Email/password salah atau role tidak sesuai','error');return;}
-      if(user.suspended){toast('Akun ditangguhkan'+(user.suspendReason?': '+user.suspendReason:'. Hubungi admin.'),'error');return;}
-      state.currentUser=user;saveState();
-      toast(`Selamat datang, ${user.name}!`,'success');render();
+      try{
+        const result=await apiRequest('/api/auth/login',{method:'POST',body:JSON.stringify({email,password})});
+        if(result.user.role!==selectedRole){await apiRequest('/api/auth/logout',{method:'POST'});toast('Pilih jenis akun yang sesuai','error');return;}
+        rememberApiUser(result.user);toast(`Selamat datang, ${result.user.name}!`,'success');render();
+      }catch(error){
+        const demo=state.users.find(u=>u.email===email&&u.password===password&&(u.role===selectedRole||u.role==='admin'));
+        if(!demo){toast(error.message.includes('Failed to fetch')?'API tidak terhubung. Periksa deployment dan DATABASE_URL.':error.message,'error');return;}
+        if(demo.suspended){toast('Akun ditangguhkan'+(demo.suspendReason?': '+demo.suspendReason:'. Hubungi admin.'),'error');return;}
+        state.currentUser=demo;saveState();toast(`Mode demo: selamat datang, ${demo.name}!`,'success');render();
+      }
     } else {
       const name=document.getElementById('regName').value.trim();
       const phone=document.getElementById('regPhone').value.trim();
       if(!name||!phone){toast('Nama dan nomor WhatsApp wajib diisi','error');return;}
-      if(state.users.find(u=>u.email===email)){toast('Email sudah terdaftar','error');return;}
-      const newUser={id:uid('u'),name,email,password,role:selectedRole,phone,balance:0,qrisPhoto:null};
+      if(state.users.find(u=>u.email===email)){toast('Email sudah terdaftar secara lokal','error');return;}
+      const bank={bankName:'',accountNumber:'',accountHolder:''};
       if(selectedRole==='seller'){
-        const bankName=document.getElementById('regBank').value;
-        const accountNumber=document.getElementById('regAccountNumber').value.trim();
-        const accountHolder=document.getElementById('regAccountHolder').value.trim();
-        if(!bankName||!accountNumber||!accountHolder){
+        bank.bankName=document.getElementById('regBank').value;
+        bank.accountNumber=document.getElementById('regAccountNumber').value.trim();
+        bank.accountHolder=document.getElementById('regAccountHolder').value.trim();
+        if(!bank.bankName||!bank.accountNumber||!bank.accountHolder){
           toast('Data rekening wajib diisi untuk penyedia','error');return;
         }
-        newUser.bank={bankName,accountNumber,accountHolder};
       }
-      state.users.push(newUser);state.currentUser=newUser;saveState();
-      toast('Akun berhasil dibuat!','success');render();
+      try{
+        const result=await apiRequest('/api/auth/register',{method:'POST',body:JSON.stringify({name,email,password,role:selectedRole,phone,bank:selectedRole==='seller'?bank:undefined})});
+        rememberApiUser(result.user);toast('Akun berhasil dibuat!','success');render();
+      }catch(error){toast(error.message.includes('Failed to fetch')?'API tidak terhubung. Periksa deployment dan DATABASE_URL.':error.message,'error');}
     }
   };
 }
@@ -1614,8 +1642,9 @@ function attachHeaderHandlers(tabs){
     else state.sellerTab='dashboard';
     render();
   };
-  document.getElementById('logoutBtn').onclick=()=>{
+  document.getElementById('logoutBtn').onclick=async()=>{
     if(!confirm('Yakin keluar dari akun?'))return;
+    try{await apiRequest('/api/auth/logout',{method:'POST'});}catch(e){}
     state.currentUser=null;
     state.buyerTab='browse';state.sellerTab='dashboard';
     state.filterStatus='all';state.searchQuery='';
@@ -2208,7 +2237,7 @@ function openMotorForm(motorId){
     reader.readAsDataURL(file);
   };
   bindPhotoEvents();
-  document.getElementById('saveMotorBtn').onclick=()=>{
+  document.getElementById('saveMotorBtn').onclick=async()=>{
     const brand=document.getElementById('fBrand').value.trim();
     const name=document.getElementById('fName').value.trim();
     const year=parseInt(document.getElementById('fYear').value)||2023;
@@ -2223,11 +2252,20 @@ function openMotorForm(motorId){
       Object.assign(editing,{brand,name,year,pricePerHour,pricePerDay,location,locationDetail,helmCount,helmIncluded:helmCount>0,description,photo:photoData});
       toast('Motor diupdate','success');
     } else {
-      state.motors.push({
+      const draft={
         id:uid('m'),sellerId:state.currentUser.id,brand,name,year,pricePerHour,pricePerDay,
         location,locationDetail,helmCount,helmIncluded:helmCount>0,description,
         photo:photoData||MOTOR_PHOTOS.vario,isOpen:true
-      });
+      };
+      if(state.currentUser.apiManaged){
+        const button=document.getElementById('saveMotorBtn');button.disabled=true;button.textContent='Menyimpan...';
+        const photo=photoData&&photoData.length<=1000000?photoData:null;
+        try{
+          const result=await apiRequest('/api/motors',{method:'POST',body:JSON.stringify({...draft,photo})});
+          state.motors.unshift(result.motor);saveState();overlay.remove();render();toast('Motor disimpan ke database','success');return;
+        }catch(error){button.disabled=false;button.textContent='Tambah';toast(error.message,'error');return;}
+      }
+      state.motors.push(draft);
       toast('Motor ditambahkan','success');
     }
     saveState();overlay.remove();render();
@@ -2388,6 +2426,7 @@ function toggleUserMenu(){
       else if(action==='theme')toggleTheme();
       else if(action==='logout'){
         if(!confirm('Yakin keluar dari akun?'))return;
+        apiRequest('/api/auth/logout',{method:'POST'}).catch(()=>{});
         state.currentUser=null;
         state.buyerTab='browse';state.sellerTab='dashboard';
         saveState();render();toast('Kamu telah keluar','info');
@@ -3783,6 +3822,7 @@ function render(){
 
 loadState();
 render();
+syncBackend();
 </script>
 </body>
 </html>

@@ -5,6 +5,10 @@ CREATE TABLE IF NOT EXISTS users (
   email text NOT NULL UNIQUE,
   password_hash text NOT NULL,
   role text NOT NULL CHECK (role IN ('buyer', 'seller')),
+  phone text NOT NULL DEFAULT '',
+  bank_name text,
+  account_number text,
+  account_holder text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
@@ -28,9 +32,19 @@ CREATE TABLE IF NOT EXISTS motors (
   location_detail text NOT NULL DEFAULT '',
   description text NOT NULL DEFAULT '',
   photo text,
+  helm_included boolean NOT NULL DEFAULT false,
+  helm_count integer NOT NULL DEFAULT 0 CHECK (helm_count >= 0),
   is_open boolean NOT NULL DEFAULT true,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS motors_available_idx ON motors (is_open, created_at DESC);
+
+-- Safe to rerun when updating a database created from an earlier version of this schema.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS phone text NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS bank_name text;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS account_number text;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS account_holder text;
+ALTER TABLE motors ADD COLUMN IF NOT EXISTS helm_included boolean NOT NULL DEFAULT false;
+ALTER TABLE motors ADD COLUMN IF NOT EXISTS helm_count integer NOT NULL DEFAULT 0;
 
 -- Booking, chat, review, payment, and admin tables are not part of this initial API yet.

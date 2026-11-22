@@ -37,7 +37,9 @@ export async function currentUser(req, sql) {
   const token = getCookie(req, 'rentgo_session');
   if (!token) return null;
   const [session] = await sql`
-    SELECT users.id, users.name, users.email, users.role
+    SELECT users.id, users.name, users.email, users.role, users.phone,
+      users.bank_name AS "bankName", users.account_number AS "accountNumber",
+      users.account_holder AS "accountHolder"
     FROM sessions JOIN users ON users.id = sessions.user_id
     WHERE sessions.token_hash = ${token} AND sessions.expires_at > now()
   `;
