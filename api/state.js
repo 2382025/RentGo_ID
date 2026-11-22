@@ -30,11 +30,15 @@ export default async function handler(req,res){
       const [existing]=await sql`SELECT * FROM rentals WHERE id=${r.id}`;
       if(!existing){
         if(user.role!=='buyer'||r.buyerId!==user.id)continue;
-        const [motor]=await sql`SELECT id,seller_id,price_per_hour,is_open,is_deleted FROM motors WHERE id=${r.motorId}`;
-        const hours=Number(r.durationHours);
-        if(!motor?.is_open||motor.is_deleted||!Number.isInteger(hours)||hours<1||hours>720)continue;
-        const amount=hours*Number(motor.price_per_hour);
-        await sql`INSERT INTO rentals (id,motor_id,buyer_id,seller_id,duration_hours,payment_method,total_price,status,payment_status,created_at) VALUES (${r.id},${motor.id},${user.id},${motor.seller_id},${hours},'QRIS',${amount},'pending_payment','unpaid',coalesce(${r.createdAt}::timestamptz,now())) ON CONFLICT (id) DO NOTHING`;
+        const unit=r.durationUnit==='day'?'day':'hour';
+        const value=Number(r.durationValue??r.durationHours);
+        const hours=unit==='day'?value*24:value;
+        const max=unit==='day'?30:24;
+        if(!Number.isInteger(value)||value<1||value>max)continue;
+        const [motor]=await sql`SELECT id,seller_id,price_per_hour,price_per_day,is_open,is_deleted FROM motors WHERE id=${r.motorId}`;
+        if(!motor?.is_open||motor.is_deleted)continue;
+        const amount=unit==='day'?value*Number(motor.price_per_day):value*Number(motor.price_per_hour);
+        await sql`INSERT INTO rentals (id,motor_id,buyer_id,seller_id,duration_hours,duration_unit,duration_value,payment_method,total_price,status,payment_status,created_at) VALUES (${r.id},${motor.id},${user.id},${motor.seller_id},${hours},${unit},${value},'QRIS',${amount},'pending_payment','unpaid',coalesce(${r.createdAt}::timestamptz,now())) ON CONFLICT (id) DO NOTHING`;
         continue;
       }
       if(user.role==='admin'){

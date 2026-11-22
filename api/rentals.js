@@ -3,7 +3,7 @@ import { getDb, json, methodNotAllowed, handleError, currentUser } from './_lib/
 
 const publicRental = (r) => ({
   id:r.id, motorId:r.motor_id, buyerId:r.buyer_id, sellerId:r.seller_id,
-  startTime:r.start_time, durationHours:r.duration_hours, paymentMethod:r.payment_method,
+  startTime:r.start_time, durationHours:r.duration_hours, durationUnit:r.duration_unit||'hour', durationValue:r.duration_value||r.duration_hours, paymentMethod:r.payment_method,
   totalPrice:Number(r.total_price), status:r.status, paymentStatus:r.payment_status,
   paymentProofPhoto:r.payment_proof_url, paymentSubmittedAt:r.payment_submitted_at,
   paymentVerifiedAt:r.payment_verified_at, completedAt:r.completed_at,
@@ -26,14 +26,18 @@ export default async function handler(req, res) {
     }
     if(req.method==='POST'){
       if(user.role!=='buyer')return json(res,403,{error:'Only buyers can create a booking.'});
-      const {motorId,durationHours,paymentMethod='QRIS'}=req.body||{};
-      const hours=Number(durationHours);
-      if(typeof motorId!=='string'||!Number.isInteger(hours)||hours<1||hours>720)return json(res,400,{error:'A motor and valid rental duration are required.'});
-      const [motor]=await sql`SELECT id,seller_id,price_per_hour,is_open FROM motors WHERE id=${motorId}`;
+      const {motorId,paymentMethod='QRIS'}=req.body||{};
+      const body=req.body||{};
+      const unit=body.durationUnit==='day'?'day':'hour';
+      const value=Number(body.durationValue??body.durationHours);
+      const max=unit==='day'?30:24;
+      const hours=unit==='day'?value*24:value;
+      if(typeof motorId!=='string'||!Number.isInteger(value)||value<1||value>max)return json(res,400,{error:'Choose a duration from 1 to 24 hours or 1 to 30 days.'});
+      const [motor]=await sql`SELECT id,seller_id,price_per_hour,price_per_day,is_open FROM motors WHERE id=${motorId}`;
       if(!motor||!motor.is_open)return json(res,404,{error:'Motor is unavailable.'});
       const id=`r_${randomBytes(16).toString('hex')}`;
-      const amount=hours*Number(motor.price_per_hour);
-      const [rental]=await sql`INSERT INTO rentals (id,motor_id,buyer_id,seller_id,duration_hours,payment_method,total_price,status,payment_status) VALUES (${id},${motor.id},${user.id},${motor.seller_id},${hours},${String(paymentMethod).slice(0,30)},${amount},'pending_payment','unpaid') RETURNING *`;
+      const amount=unit==='day'?value*Number(motor.price_per_day):value*Number(motor.price_per_hour);
+      const [rental]=await sql`INSERT INTO rentals (id,motor_id,buyer_id,seller_id,duration_hours,duration_unit,duration_value,payment_method,total_price,status,payment_status) VALUES (${id},${motor.id},${user.id},${motor.seller_id},${hours},${unit},${value},${String(paymentMethod).slice(0,30)},${amount},'pending_payment','unpaid') RETURNING *`;
       return json(res,201,{rental:publicRental(rental)});
     }
     if(req.method==='PATCH'){

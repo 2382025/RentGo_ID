@@ -232,6 +232,13 @@ body.dark .chat-bubble.other{background:#334155;color:var(--text)}
 .duration-picker{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px}
 .duration-opt{padding:10px 8px;border:2px solid var(--border);border-radius:10px;background:#fff;font-size:12px;font-weight:600;transition:all .2s;text-align:center}
 .duration-opt.active{border-color:var(--primary);background:var(--primary-light);color:var(--primary)}
+.duration-units{display:flex;gap:8px;margin-bottom:12px}
+.duration-unit{flex:1;padding:10px;border:2px solid var(--border);border-radius:10px;background:#fff;font-weight:600;color:var(--text)}
+.duration-unit.active{border-color:var(--primary);background:var(--primary-light);color:var(--primary)}
+.duration-stepper{display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:12px;padding:12px;background:var(--bg);border-radius:12px}
+.duration-stepper button{width:42px;height:42px;border:1px solid var(--border);border-radius:10px;background:#fff;color:var(--primary);font-size:20px;font-weight:700}
+.duration-stepper input{width:90px;height:46px;border:1px solid var(--border);border-radius:10px;text-align:center;font-size:20px;font-weight:700;color:var(--text);background:#fff}
+.duration-stepper .duration-unit-label{font-size:14px;font-weight:600;color:var(--muted);min-width:40px}
 .payment-list{display:flex;flex-direction:column;gap:8px}
 .payment-opt{display:flex;align-items:center;gap:12px;padding:12px 14px;border:2px solid var(--border);border-radius:10px;cursor:pointer;transition:all .2s;background:#fff}
 .payment-opt.active{border-color:var(--primary);background:var(--primary-light)}
@@ -669,6 +676,11 @@ function formatDate(iso){
   const d=new Date(iso);
   return d.toLocaleDateString('id-ID',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});
 }
+function formatRentalDuration(r){
+  const unit=r.durationUnit==='day'?'hari':'jam';
+  const value=Number(r.durationValue)||Number(r.durationHours)||1;
+  return `${value} ${unit}`;
+}
 function timeAgo(iso){
   const diff=Date.now()-new Date(iso).getTime();
   const m=Math.floor(diff/60000);
@@ -753,7 +765,7 @@ function exportRentalsCSV(scope='buyer'){
       r.id.slice(-8),
       motor?`${motor.brand} ${motor.name}`:'-',
       formatDate(r.createdAt),
-      r.durationHours,
+      formatRentalDuration(r),
       r.totalPrice,
       r.paymentMethod,
       r.status,
@@ -1199,7 +1211,7 @@ function renderActiveRentalBanner(r){
       <div class="active-rental pending">
         <div class="active-rental-info">
           <h3><i class="fa-solid fa-hourglass-half" style="color:#fcd34d;margin-right:8px"></i>Lunas (Escrow) — Menunggu Pengambilan</h3>
-          <p>${esc(motor.name)} · ${formatDate(r.createdAt)} · ${r.durationHours} jam</p>
+          <p>${esc(motor.name)} · ${formatDate(r.createdAt)} · ${formatRentalDuration(r)}</p>
           <p style="margin-top:4px"><i class="fa-solid fa-location-dot"></i> ${esc(motor.location)} — ${esc(motor.locationDetail)}</p>
         </div>
         <div class="active-rental-actions">
@@ -1216,7 +1228,7 @@ function renderActiveRentalBanner(r){
     <div class="active-rental">
       <div class="active-rental-info">
         <h3><i class="fa-solid fa-circle" style="color:${overdue?'#fca5a5':'#4ade80'};font-size:10px;margin-right:8px"></i>${esc(motor.name)} sedang digunakan</h3>
-        <p>Mulai: ${formatDate(r.startTime)} · ${r.durationHours} jam · Seller: ${esc(seller?.name||'-')}</p>
+        <p>Mulai: ${formatDate(r.startTime)} · ${formatRentalDuration(r)} · Seller: ${esc(seller?.name||'-')}</p>
       </div>
       <div class="timer-display ${overdue?'overdue':''}" data-timer data-start="${r.startTime}" data-duration="${r.durationHours}">
         <div class="label">${overdue?'Terlambat':'Sisa Waktu'}</div>
@@ -1257,7 +1269,7 @@ function renderBuyerHistory(){
             <div class="history-info">
               <h4>${esc(motor?motor.name:'Motor')}</h4>
               <p>${esc(seller?seller.name:'-')} · ${formatDate(r.createdAt)}</p>
-              <p>${r.durationHours} jam · QRIS</p>
+              <p>${formatRentalDuration(r)} · QRIS</p>
             </div>
             <div class="history-meta">
               <div class="price">${rupiah(r.totalPrice)}</div>
@@ -1439,7 +1451,7 @@ function renderSellerDashboard(){
           <div class="active-rental pending" style="margin-bottom:12px">
             <div class="active-rental-info">
               <h3>${esc(motor?.name||'Motor')} — ${esc(buyer?.name||'Buyer')}</h3>
-              <p><i class="fa-solid fa-phone"></i> ${esc(buyer?.phone||'-')} · ${r.durationHours} jam</p>
+              <p><i class="fa-solid fa-phone"></i> ${esc(buyer?.phone||'-')} · ${formatRentalDuration(r)}</p>
               <p style="margin-top:4px">Dana di Escrow: <strong>${rupiah(r.totalPrice)}</strong></p>
             </div>
             <div class="active-rental-actions">
@@ -1462,7 +1474,7 @@ function renderSellerDashboard(){
           <div class="active-rental" style="margin-bottom:12px">
             <div class="active-rental-info">
               <h3>${esc(motor?.name||'Motor')} — ${esc(buyer?.name||'Buyer')}</h3>
-              <p><i class="fa-solid fa-phone"></i> ${esc(buyer?.phone||'-')} · ${r.durationHours} jam</p>
+              <p><i class="fa-solid fa-phone"></i> ${esc(buyer?.phone||'-')} · ${formatRentalDuration(r)}</p>
             </div>
             <div class="timer-display ${overdue?'overdue':''}" data-timer data-start="${r.startTime}" data-duration="${r.durationHours}">
               <div class="label">${overdue?'Terlambat':'Sisa Waktu'}</div>
@@ -1540,7 +1552,7 @@ function renderSellerRentals(){
           <div class="active-rental pending" style="margin-bottom:12px">
             <div class="active-rental-info">
               <h3>${esc(motor?.name||'Motor')} — ${esc(buyer?.name||'Buyer')}</h3>
-              <p><i class="fa-solid fa-phone"></i> ${esc(buyer?.phone||'-')} · ${r.durationHours} jam</p>
+              <p><i class="fa-solid fa-phone"></i> ${esc(buyer?.phone||'-')} · ${formatRentalDuration(r)}</p>
               <p style="margin-top:4px">Escrow: ${rupiah(r.totalPrice)}</p>
             </div>
             <div class="active-rental-actions">
@@ -1557,7 +1569,7 @@ function renderSellerRentals(){
         <div class="active-rental" style="margin-bottom:12px">
           <div class="active-rental-info">
             <h3>${esc(motor?.name||'Motor')} — ${esc(buyer?.name||'Buyer')}</h3>
-            <p><i class="fa-solid fa-phone"></i> ${esc(buyer?.phone||'-')} · ${r.durationHours} jam</p>
+            <p><i class="fa-solid fa-phone"></i> ${esc(buyer?.phone||'-')} · ${formatRentalDuration(r)}</p>
           </div>
           <div class="timer-display ${overdue?'overdue':''}" data-timer data-start="${r.startTime}" data-duration="${r.durationHours}">
             <div class="label">${overdue?'Terlambat':'Sisa Waktu'}</div>
@@ -1665,7 +1677,7 @@ function renderSellerHistory(){
             <div class="history-info">
               <h4>${esc(motor?.name||'Motor')}</h4>
               <p>${esc(buyer?.name||'-')} · ${formatDate(r.completedAt||r.createdAt)}</p>
-              <p>${r.durationHours} jam · QRIS (Lunas)</p>
+              <p>${formatRentalDuration(r)} · QRIS (Lunas)</p>
               ${review?`<p style="color:#f59e0b;margin-top:4px">⭐ ${review.rating}/5 — "${esc(review.comment.slice(0,50))}${review.comment.length>50?'...':''}"</p>`:''}
             </div>
             <div class="history-meta">
@@ -2110,8 +2122,18 @@ function openMotorDetail(motorId){
         </div>
         ${!rented?`
           <div class="section-title">Pilih Durasi</div>
+          <div class="duration-units" id="durationUnits">
+            <button type="button" class="duration-unit active" data-unit="hour">Per Jam</button>
+            <button type="button" class="duration-unit" data-unit="day">Per Hari</button>
+          </div>
+          <div class="duration-stepper">
+            <button type="button" id="durationDown" aria-label="Kurangi durasi"><i class="fa-solid fa-minus"></i></button>
+            <input type="number" id="durationValue" min="1" max="24" step="1" value="1" inputmode="numeric" aria-label="Durasi sewa">
+            <span class="duration-unit-label" id="durationUnitLabel">jam</span>
+            <button type="button" id="durationUp" aria-label="Tambah durasi"><i class="fa-solid fa-plus"></i></button>
+          </div>
           <div class="duration-picker" id="durationPicker">
-            ${[1,2,3,5,8,24].map(h=>`<button class="duration-opt ${h===1?'active':''}" data-hours="${h}">${h} jam</button>`).join('')}
+            ${[1,2,3,5,8,24].map(h=>`<button type="button" class="duration-opt ${h===1?'active':''}" data-unit="hour" data-value="${h}">${h} jam</button>`).join('')}
           </div>
           <div class="section-title">Metode Pembayaran</div>
           <div class="payment-list">
@@ -2124,7 +2146,7 @@ function openMotorDetail(motorId){
             </div>
           </div>
           <div class="price-summary">
-            <div class="price-row"><span>Harga per jam</span><span id="sumPrice">${rupiah(m.pricePerHour)}</span></div>
+            <div class="price-row"><span id="sumRateLabel">Harga per jam</span><span id="sumPrice">${rupiah(m.pricePerHour)}</span></div>
             <div class="price-row"><span>Durasi</span><span id="sumDuration">1 jam</span></div>
             <div class="price-row total"><span>Total Dibayar</span><span id="sumTotal">${rupiah(m.pricePerHour)}</span></div>
           </div>
@@ -2164,28 +2186,47 @@ function openMotorDetail(motorId){
   document.body.appendChild(overlay);
   
   const updateSummary=()=>{
-    const total=selectedDuration*m.pricePerHour;
-    document.getElementById('sumPrice').textContent=rupiah(m.pricePerHour);
-    document.getElementById('sumDuration').textContent=selectedDuration+' jam';
+    const isDay=selectedUnit==='day';
+    const rate=isDay?m.pricePerDay:m.pricePerHour;
+    const total=selectedDuration*rate;
+    document.getElementById('durationValue').value=selectedDuration;
+    document.getElementById('durationValue').max=isDay?30:24;
+    document.getElementById('durationUnitLabel').textContent=isDay?'hari':'jam';
+    document.getElementById('sumRateLabel').textContent=isDay?'Harga per hari':'Harga per jam';
+    document.getElementById('sumPrice').textContent=rupiah(rate);
+    document.getElementById('sumDuration').textContent=selectedDuration+(isDay?' hari':' jam');
     document.getElementById('sumTotal').textContent=rupiah(total);
   };
   
   overlay.querySelectorAll('.modal-close, .modal-close-btn').forEach(b=>b.onclick=()=>overlay.remove());
   overlay.onclick=(e)=>{if(e.target===overlay)overlay.remove();};
   
-  overlay.querySelectorAll('.duration-opt').forEach(opt=>{
-    opt.onclick=()=>{
-      overlay.querySelectorAll('.duration-opt').forEach(o=>o.classList.remove('active'));
-      opt.classList.add('active');selectedDuration=parseInt(opt.dataset.hours);updateSummary();
-    };
+  let selectedUnit='hour';
+  const setDuration=(value)=>{
+    const max=selectedUnit==='day'?30:24;
+    selectedDuration=Math.max(1,Math.min(max,Math.round(Number(value)||1)));
+    overlay.querySelectorAll('.duration-opt').forEach(o=>o.classList.toggle('active',o.dataset.unit===selectedUnit&&Number(o.dataset.value)===selectedDuration));
+    updateSummary();
+  };
+  overlay.querySelectorAll('.duration-unit').forEach(button=>button.onclick=()=>{
+    selectedUnit=button.dataset.unit;
+    selectedDuration=1;
+    overlay.querySelectorAll('.duration-unit').forEach(b=>b.classList.toggle('active',b===button));
+    overlay.querySelector('#durationPicker').innerHTML=(selectedUnit==='day'?[1,2,3,7,14,30]:[1,2,3,5,8,24]).map(v=>`<button type="button" class="duration-opt ${v===1?'active':''}" data-unit="${selectedUnit}" data-value="${v}">${v} ${selectedUnit==='day'?'hari':'jam'}</button>`).join('');
+    overlay.querySelectorAll('.duration-opt').forEach(opt=>opt.onclick=()=>setDuration(opt.dataset.value));
+    setDuration(1);
   });
+  overlay.querySelectorAll('.duration-opt').forEach(opt=>opt.onclick=()=>setDuration(opt.dataset.value));
+  document.getElementById('durationDown').onclick=()=>setDuration(selectedDuration-1);
+  document.getElementById('durationUp').onclick=()=>setDuration(selectedDuration+1);
+  document.getElementById('durationValue').oninput=e=>{if(e.target.value!=='')setDuration(e.target.value);};
   
   const bookBtn=document.getElementById('bookBtn');
   if(bookBtn){
     bookBtn.onclick=async()=>{
       bookBtn.disabled=true;
       let rental;
-      try{const result=await apiRequest('/api/rentals',{method:'POST',body:JSON.stringify({motorId:m.id,durationHours:selectedDuration,paymentMethod:'QRIS'})});rental=result.rental;await syncBackend();}
+      try{const result=await apiRequest('/api/rentals',{method:'POST',body:JSON.stringify({motorId:m.id,durationUnit:selectedUnit,durationValue:selectedDuration,paymentMethod:'QRIS'})});rental=result.rental;await syncBackend();}
       catch(error){bookBtn.disabled=false;toast(error.message,'error');return;}
       overlay.remove();
       
@@ -3505,7 +3546,7 @@ function renderAdminRentals(){
           <div class="history-info">
             <h4>${esc(m?m.name:'Motor')} <span class="chip ${rs[1]}">${rs[0]}</span></h4>
             <p>Penyewa: ${esc(sellerName(r.buyerId))} · Penyedia: ${esc(sellerName(r.sellerId))}</p>
-            <p>${formatDate(r.createdAt)} · ${r.durationHours} jam</p>
+            <p>${formatDate(r.createdAt)} · ${formatRentalDuration(r)}</p>
           </div>
           <div class="history-meta">
             <div class="price">${rupiah(r.totalPrice)}</div>
@@ -3530,7 +3571,7 @@ function openAdminRentalDetail(id){
       <div class="kv"><span>Motor</span><span>${esc(m?m.brand+' '+m.name:'-')}</span></div>
       <div class="kv"><span>Penyewa</span><span>${esc(sellerName(r.buyerId))}</span></div>
       <div class="kv"><span>Penyedia</span><span>${esc(sellerName(r.sellerId))}</span></div>
-      <div class="kv"><span>Durasi</span><span>${r.durationHours} jam</span></div>
+      <div class="kv"><span>Durasi</span><span>${formatRentalDuration(r)}</span></div>
       <div class="kv"><span>Total</span><span>${rupiah(r.totalPrice)}</span></div>
       <div class="kv"><span>Dibuat</span><span>${formatDate(r.createdAt)}</span></div>
       ${r.startTime?`<div class="kv"><span>Mulai</span><span>${formatDate(r.startTime)}</span></div>`:''}
@@ -3797,7 +3838,7 @@ function adminExportUsers(){
 function adminExportRentals(){
   const rows=state.rentals.slice().sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).map(r=>{
     const m=state.motors.find(x=>x.id===r.motorId);
-    return [r.id.slice(-8),m?m.brand+' '+m.name:'-',sellerName(r.buyerId),sellerName(r.sellerId),formatDate(r.createdAt),r.durationHours,r.totalPrice,(RENTAL_STATUS[r.status]||[r.status])[0],r.commission||0,r.status==='completed'?(r.commissionPaid?'Lunas':r.commissionPending?'Menunggu verifikasi':'Belum bayar'):''];
+    return [r.id.slice(-8),m?m.brand+' '+m.name:'-',sellerName(r.buyerId),sellerName(r.sellerId),formatDate(r.createdAt),formatRentalDuration(r),r.totalPrice,(RENTAL_STATUS[r.status]||[r.status])[0],r.commission||0,r.status==='completed'?(r.commissionPaid?'Lunas':r.commissionPending?'Menunggu verifikasi':'Belum bayar'):''];
   });
   if(rows.length===0){toast('Belum ada data untuk diexport','warning');return;}
   downloadCSV(`RentGo_Transaksi_${todayStamp()}.csv`,['ID','Motor','Penyewa','Penyedia','Tanggal','Durasi (jam)','Total','Status','Komisi','Status Komisi'],rows);

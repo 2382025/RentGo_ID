@@ -59,6 +59,10 @@ CREATE TABLE IF NOT EXISTS rentals (
   commission_payment_id text REFERENCES commission_payments(id) ON DELETE SET NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE rentals ADD COLUMN IF NOT EXISTS duration_unit text NOT NULL DEFAULT 'hour';
+ALTER TABLE rentals ADD COLUMN IF NOT EXISTS duration_value integer NOT NULL DEFAULT 1;
+UPDATE rentals SET duration_value=duration_hours
+  WHERE duration_unit='hour' AND duration_value=1 AND duration_hours>1;
 CREATE INDEX IF NOT EXISTS rentals_buyer_created_idx ON rentals (buyer_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS rentals_seller_created_idx ON rentals (seller_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS rentals_motor_status_idx ON rentals (motor_id, status);
