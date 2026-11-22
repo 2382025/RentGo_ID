@@ -867,11 +867,6 @@ function renderAuth(){
           </div>
           <button class="btn btn-primary btn-block" id="authSubmit">Masuk</button>
           <div class="auth-switch"><span id="switchText">Belum punya akun?</span> <a id="switchBtn">Daftar sekarang</a></div>
-          <div style="margin-top:16px;padding:10px;background:var(--bg);border-radius:10px;font-size:11px;color:var(--muted);line-height:1.6">
-            <strong>Demo akun:</strong><br>
-            Buyer: meli@student.com / 123456<br>
-            Seller: jacob@rental.com / 123456
-          </div>
         </div>
       </div>
     </div>
@@ -2262,7 +2257,7 @@ function openMotorForm(motorId){
         const photo=photoData&&photoData.length<=1000000?photoData:null;
         try{
           const result=await apiRequest('/api/motors',{method:'POST',body:JSON.stringify({...draft,photo})});
-          state.motors.unshift(result.motor);saveState();overlay.remove();render();toast('Motor disimpan ke database','success');return;
+          state.motors.unshift(result.motor);saveState();overlay.remove();render();toast('Motor berhasil ditambahkan','success');return;
         }catch(error){button.disabled=false;button.textContent='Tambah';toast(error.message,'error');return;}
       }
       state.motors.push(draft);
