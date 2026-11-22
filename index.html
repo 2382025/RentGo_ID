@@ -594,13 +594,14 @@ let state={
 /* ============================================================
    PERSISTENCE & HELPERS
    ============================================================ */
-let stateHydrated=false,stateSaveTimer=null,stateSyncChain=Promise.resolve(),lastSyncedState=null,stateRetryCount=0;
+let stateHydrated=false,stateSaveTimer=null,stateSyncChain=Promise.resolve(),lastSyncedState=null,stateRetryCount=0,stateWriteInFlight=false,realtimeTimer=null,realtimeBusy=false;
 const persistentKeys=['users','motors','rentals','reviews','chats','notifications','commissionPayments','auditLogs','settings'];
 function cloneStateValue(value){return JSON.parse(JSON.stringify(value));}
 function saveState(){
   if(!stateHydrated||!state.currentUser?.apiManaged)return;
   clearTimeout(stateSaveTimer);
   stateSaveTimer=setTimeout(async()=>{
+    stateSaveTimer=null;
     const snapshot={};const payload={};
     for(const key of persistentKeys){
       snapshot[key]=cloneStateValue(state[key]);
@@ -617,6 +618,7 @@ function saveState(){
       }
     }
     if(!Object.keys(payload).length)return;
+    stateWriteInFlight=true;
     try{
       stateSyncChain=stateSyncChain.then(()=>apiRequest('/api/state',{method:'PUT',body:JSON.stringify(payload)}));
       await stateSyncChain;
@@ -626,7 +628,7 @@ function saveState(){
       stateSyncChain=Promise.resolve();console.error('RentGo sync failed:',error);
       if(stateRetryCount<3){stateRetryCount++;stateSaveTimer=setTimeout(()=>saveState(),1000*stateRetryCount);}
       else{stateRetryCount=0;toast('Perubahan belum tersinkron. Periksa koneksi lalu coba lagi.','error');}
-    }
+    }finally{stateWriteInFlight=false;}
   },350);
 }
 function applySettings(){
@@ -788,9 +790,18 @@ function rememberApiUser(user){
   state.currentUser=normalized;
 }
 async function syncBackend(){
+  let sessionUser=null;
+  let failedStage='session';
   try{
     const session=await apiRequest('/api/auth/me');
-    if(!session.user){clearAppData();render();return;}
+    if(!session.user){
+      const loginWasJustAttempted=Boolean(state.currentUser?.apiManaged);
+      clearAppData();render();
+      if(loginWasJustAttempted)toast('Login berhasil, tetapi sesi tidak terbaca. Coba masuk lagi.','error');
+      return false;
+    }
+    sessionUser=session.user;
+    failedStage='data';
     const data=await apiRequest('/api/data');
     state.users=(data.users||[]).map(u=>({...u,apiManaged:u.id===session.user.id,bank:u.bank||(u.bankName?{bankName:u.bankName,accountNumber:u.accountNumber,accountHolder:u.accountHolder}:undefined)}));
     state.currentUser=state.users.find(u=>u.id===session.user.id)||{...session.user,apiManaged:true};
@@ -802,7 +813,74 @@ async function syncBackend(){
     stateHydrated=true;applySettings();
     lastSyncedState={};for(const key of persistentKeys)lastSyncedState[key]=cloneStateValue(state[key]);
     render();
-  }catch(error){console.info('RentGo API is not connected yet:',error.message);}
+    return true;
+  }catch(error){
+    console.info('RentGo API sync failed:',failedStage,error.message);
+    if(sessionUser)renderDataSyncError(sessionUser,failedStage,error);
+    return false;
+  }
+}
+async function refreshBackendData(){
+  if(!stateHydrated||!state.currentUser?.apiManaged||realtimeBusy||stateSaveTimer||stateWriteInFlight)return;
+  if(document.querySelector('.modal-overlay'))return;
+  const active=document.activeElement;
+  if(active?.isContentEditable)return;
+  const focusState=active?.id&&/^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName)
+    ?{id:active.id,start:active.selectionStart,end:active.selectionEnd}:null;
+  realtimeBusy=true;
+  try{
+    const data=await apiRequest('/api/data');
+    const userId=state.currentUser.id;
+    const next={
+      users:(data.users||[]).map(u=>({...u,apiManaged:u.id===userId,bank:u.bank||(u.bankName?{bankName:u.bankName,accountNumber:u.accountNumber,accountHolder:u.accountHolder}:undefined)})),
+      motors:data.motors||[],rentals:data.rentals||[],reviews:data.reviews||[],chats:data.chats||[],
+      notifications:data.notifications||[],withdrawals:data.withdrawals||[],commissionPayments:data.commissionPayments||[],
+      auditLogs:data.auditLogs||[],settings:data.settings||JSON.parse(JSON.stringify(DEFAULT_SETTINGS))
+    };
+    let changed=false;
+    for(const key of persistentKeys){
+      if(JSON.stringify(state[key])!==JSON.stringify(next[key]))changed=true;
+      state[key]=next[key];
+    }
+    state.currentUser=state.users.find(u=>u.id===userId)||state.currentUser;
+    if(changed){
+      lastSyncedState={};for(const key of persistentKeys)lastSyncedState[key]=cloneStateValue(state[key]);
+      applySettings();render();
+      if(focusState){
+        const field=document.getElementById(focusState.id);
+        if(field){field.focus({preventScroll:true});try{if(focusState.start!==null)field.setSelectionRange(focusState.start,focusState.end);}catch{}}
+      }
+    }
+  }catch(error){
+    console.info('RentGo background refresh failed:',error.message);
+  }finally{realtimeBusy=false;}
+}
+function startRealtimeSync(){
+  if(realtimeTimer)clearInterval(realtimeTimer);
+  realtimeTimer=setInterval(refreshBackendData,10000);
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshBackendData();});
+  window.addEventListener('focus',refreshBackendData);
+}
+function renderDataSyncError(user,stage,error){
+  const detail=stage==='data'
+    ?'Login berhasil, tetapi data akun dari Neon gagal dimuat. Pastikan database/schema.sql dan database/features.sql sudah dijalankan pada database yang dipakai Vercel.'
+    :'Login berhasil, tetapi sesi akun tidak bisa diverifikasi oleh API.';
+  document.getElementById('app').innerHTML=`
+    <div style="min-height:100vh;display:grid;place-items:center;padding:24px;background:var(--bg)">
+      <section class="adm-card" style="width:min(100%,520px);padding:28px;text-align:center">
+        <div style="font-size:42px;color:var(--warning);margin-bottom:12px"><i class="fa-solid fa-triangle-exclamation"></i></div>
+        <h2 style="margin-bottom:10px">Dashboard belum dapat dimuat</h2>
+        <p style="color:var(--muted);line-height:1.6;margin-bottom:12px">${esc(detail)}</p>
+        <p style="font-size:12px;color:var(--muted);margin-bottom:20px">${esc(error.message||'API request failed')} · akun ${esc(user.email||'')}</p>
+        <button class="btn btn-primary" id="retryDataLoad"><i class="fa-solid fa-rotate-right"></i> Coba lagi</button>
+        <button class="btn btn-secondary" id="logoutDataLoad" style="margin-left:8px">Keluar</button>
+      </section>
+    </div>`;
+  document.getElementById('retryDataLoad').onclick=()=>syncBackend();
+  document.getElementById('logoutDataLoad').onclick=async()=>{
+    try{await apiRequest('/api/auth/logout',{method:'POST'});}catch{}
+    clearAppData();render();
+  };
 }
 function renderAuth(){
   document.getElementById('app').innerHTML=`
@@ -898,7 +976,8 @@ function renderAuth(){
       try{
         const result=await apiRequest('/api/auth/login',{method:'POST',body:JSON.stringify({email,password})});
         if(result.user.role!=='admin'&&result.user.role!==selectedRole){await apiRequest('/api/auth/logout',{method:'POST'});toast('Pilih jenis akun yang sesuai','error');return;}
-        rememberApiUser(result.user);toast(`Selamat datang, ${result.user.name}!`,'success');await syncBackend();
+        rememberApiUser(result.user);
+        if(await syncBackend())toast(`Selamat datang, ${result.user.name}!`,'success');
       }catch(error){
         toast(error.message.includes('Failed to fetch')?'API tidak terhubung. Periksa deployment dan DATABASE_URL.':error.message,'error');return;
       }
@@ -918,7 +997,8 @@ function renderAuth(){
       }
       try{
         const result=await apiRequest('/api/auth/register',{method:'POST',body:JSON.stringify({name,email,password,role:selectedRole,phone,bank:selectedRole==='seller'?bank:undefined})});
-        rememberApiUser(result.user);toast('Akun berhasil dibuat!','success');await syncBackend();
+        rememberApiUser(result.user);
+        if(await syncBackend())toast('Akun berhasil dibuat!','success');
       }catch(error){toast(error.message.includes('Failed to fetch')?'API tidak terhubung. Periksa deployment dan DATABASE_URL.':error.message,'error');}
     }
   };
@@ -3804,6 +3884,7 @@ function render(){
 
 loadState();
 render();
+startRealtimeSync();
 syncBackend();
 </script>
 </body>

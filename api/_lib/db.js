@@ -12,6 +12,7 @@ export function getDb() {
 
 export function json(res, status, body) {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store, private');
   res.status(status).send(JSON.stringify(body));
 }
 

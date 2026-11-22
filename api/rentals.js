@@ -51,11 +51,12 @@ export default async function handler(req, res) {
         [updated]=await sql`UPDATE rentals SET status='pending_payment',payment_status='rejected',payment_proof_url=NULL,payment_submitted_at=NULL WHERE id=${id} RETURNING *`;
       }else if(action==='pickup'&&user.role==='seller'&&r.seller_id===user.id&&r.status==='booked'){
         [updated]=await sql`UPDATE rentals SET status='active',start_time=now() WHERE id=${id} RETURNING *`;
-      }else if(action==='return'&&user.role==='seller'&&r.seller_id===user.id&&r.status==='active'){
+      }else if(action==='return'&&((user.role==='seller'&&r.seller_id===user.id)||(user.role==='buyer'&&r.buyer_id===user.id))&&r.status==='active'){
         const [settings]=await sql`SELECT commission_rate FROM platform_settings WHERE id=1`;
         const rate=settings?Number(settings.commission_rate):0.10;
         const commission=Math.round(Number(r.total_price)*rate);
-        [updated]=await sql`UPDATE rentals SET status='completed',completed_at=now(),commission=${commission},commission_paid=false,commission_pending=false WHERE id=${id} RETURNING *`;
+        [updated]=await sql`UPDATE rentals SET status='completed',completed_at=now(),commission=${commission},commission_paid=false,commission_pending=false WHERE id=${id} AND status='active' RETURNING *`;
+        if(!updated)return json(res,409,{error:'This rental has already been completed.'});
         if(updated)await sql`UPDATE users SET balance=balance+${Number(r.total_price)} WHERE id=${r.seller_id}`;
       }else if(action==='cancel'&&((user.role==='buyer'&&r.buyer_id===user.id)||user.role==='admin')&&['pending_payment','pending_verification','booked'].includes(r.status)){
         const reason=typeof value==='string'?value.slice(0,500):'';
