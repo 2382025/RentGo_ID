@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vercel dev"
+    "dev": "vercel dev",
+    "seed:admin": "node scripts/seed-admin.js"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.0.2",

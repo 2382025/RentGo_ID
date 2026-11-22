@@ -4,13 +4,17 @@ CREATE TABLE IF NOT EXISTS users (
   name text NOT NULL,
   email text NOT NULL UNIQUE,
   password_hash text NOT NULL,
-  role text NOT NULL CHECK (role IN ('buyer', 'seller')),
+  role text NOT NULL CHECK (role IN ('buyer', 'seller', 'admin')),
   phone text NOT NULL DEFAULT '',
   bank_name text,
   account_number text,
   account_holder text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- Permit a restricted, pre-provisioned administrator account (never public registration).
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
+ALTER TABLE users ADD CONSTRAINT users_role_check CHECK (role IN ('buyer', 'seller', 'admin'));
 
 CREATE TABLE IF NOT EXISTS sessions (
   token_hash text PRIMARY KEY,
@@ -47,4 +51,4 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS account_holder text;
 ALTER TABLE motors ADD COLUMN IF NOT EXISTS helm_included boolean NOT NULL DEFAULT false;
 ALTER TABLE motors ADD COLUMN IF NOT EXISTS helm_count integer NOT NULL DEFAULT 0;
 
--- Booking, chat, review, payment, and admin tables are not part of this initial API yet.
+-- Booking, chat, review, and commission-payment tables are not part of this initial API yet.

@@ -21,6 +21,24 @@ Open the site through `vercel dev` so the frontend can reach the API. Opening th
 5. Run `database/schema.sql` once in the Neon SQL Editor.
 6. Check `/api/health`; a successful response is `{"status":"ok","database":"connected"}`.
 
+### Provision the administrator account
+
+After applying the schema and installing dependencies, run the seed script from the project folder. In PowerShell, enter the password without displaying it:
+
+```powershell
+$secure = Read-Host "Admin password" -AsSecureString
+$ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+try {
+  $env:ADMIN_PASSWORD = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
+  npm run seed:admin
+} finally {
+  [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
+  Remove-Item Env:ADMIN_PASSWORD -ErrorAction SilentlyContinue
+}
+```
+
+The email defaults to `admin@rentgo.id`; set `ADMIN_EMAIL` to override it. The script hashes the password and creates or updates the admin account. Admins cannot register from the public form and may sign in with either role selector. Use a strong, unique password for the admin account.
+
 Do not commit `.env` or `.env.local`. `.env.example` contains only a placeholder. Vercel provides the production environment variables at runtime.
 
 ## API
@@ -33,8 +51,8 @@ Do not commit `.env` or `.env.local`. `.env.example` contains only a placeholder
 - `GET /api/motors` — lists available database-backed listings.
 - `POST /api/motors` — creates a listing for the signed-in seller. JSON fields include `brand`, `name`, `year`, `pricePerHour`, and `pricePerDay`; location, description, helmet details, and a small photo are optional.
 
-Passwords are bcrypt-hashed, session tokens are stored as SHA-256 hashes, and the session cookie is HTTP-only, secure, and same-site. The frontend now calls the API for sign-in/sign-up and listing browse/create. Database setup is required before those API calls can succeed. The sample accounts inside the HTML are demo-only and are not database accounts.
+Passwords are bcrypt-hashed, session tokens are stored as SHA-256 hashes, and the session cookie is HTTP-only, secure, and same-site. The frontend now calls the API for sign-in/sign-up and listing browse/create. Database setup is required before those API calls can succeed. The sample buyer and seller accounts inside the HTML are demo-only and are not database accounts. Booking, chat, review, and commission-payment records still use browser storage; admin verification is not yet shared across devices.
 
 ## GitHub
 
-Commit `index.html`, `api/`, `database/`, `package.json`, `package-lock.json` (after `npm install`), `vercel.json`, `.gitignore`, `.env.example`, and this README. Never commit database credentials.
+Commit `index.html`, `api/`, `database/`, `scripts/`, `package.json`, `package-lock.json` (after `npm install`), `vercel.json`, `.gitignore`, `.env.example`, and this README. Never commit database credentials.
