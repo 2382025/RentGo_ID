@@ -557,7 +557,6 @@ body.dark .adm-card{background:#1e293b;color:var(--text)}
 /* ============================================================
    KONFIGURASI & STATE
    ============================================================ */
-const STORAGE_KEY='rentgo_v7'; // Naik versi untuk update struktur data
 let COMMISSION_RATE=0.10; // dapat diubah admin lewat Pengaturan
 
 // Contoh Rekening Platform
@@ -577,52 +576,15 @@ const MOTOR_PHOTOS={
   pcx:'https://images.unsplash.com/photo-1591768793355-74d04bb6608f?w=800&h=600&fit=crop'
 };
 
-const SEED_USERS=[
-  { id:'u1', name:'Jacob Rental', email:'jacob@rental.com', password:'123456', role:'seller', phone:'0812-1111-2222', balance:0,
-    bank:{bankName:'BCA',accountNumber:'1234567890',accountHolder:'Jacob Sitompul'}, qrisPhoto:null },
-  { id:'u2', name:'Machi Rental', email:'machi@rental.com', password:'123456', role:'seller', phone:'0812-3333-4444', balance:0,
-    bank:{bankName:'BRI',accountNumber:'0987654321',accountHolder:'Machi Lumban'}, qrisPhoto:null },
-  { id:'u3', name:'Dwi Rental', email:'dwi@rental.com', password:'123456', role:'seller', phone:'0812-5555-6666', balance:0,
-    bank:{bankName:'Mandiri',accountNumber:'1122334455',accountHolder:'Dwi Pratama'}, qrisPhoto:null },
-  { id:'b1', name:'Melliana Hutagalung', email:'meli@student.com', password:'123456', role:'buyer', phone:'0812-6278-7043' },
-  { id:'b2', name:'Shena Lestari', email:'shena@student.com', password:'123456', role:'buyer', phone:'0812-7777-8888' }
-];
-
 const DEFAULT_SETTINGS={
   commissionRate:0.10, dueDay:5,
   bank:{ bankName:'BCA', accountNumber:'1234567890', accountHolder:'PT RentGo Indonesia' }
 };
 
-const SEED_MOTORS=[
-  { id:'m1', sellerId:'u1', brand:'Honda', name:'Vario 125', year:2022, pricePerHour:10000, pricePerDay:70000,
-    location:'Pos 1 UNAI', locationDetail:'Depan gerbang utama kampus', helmIncluded:true, helmCount:2,
-    description:'Motor matic nyaman, cocok untuk perjalanan dalam kota. Sudah termasuk 2 helm SNI dan jas hujan.',
-    photo:MOTOR_PHOTOS.vario, isOpen:true },
-  { id:'m2', sellerId:'u2', brand:'Honda', name:'Beat Street', year:2021, pricePerHour:8000, pricePerDay:60000,
-    location:'Pos 2 UNAI', locationDetail:'Samping parkiran fakultas', helmIncluded:true, helmCount:1,
-    description:'Motor irit dan ringan, cocok untuk mahasiswa. Termasuk 1 helm dan raincoat.',
-    photo:MOTOR_PHOTOS.beat, isOpen:true },
-  { id:'m3', sellerId:'u3', brand:'Yamaha', name:'NMAX 155', year:2023, pricePerHour:15000, pricePerDay:100000,
-    location:'Gerbang Belakang UNAI', locationDetail:'Dekat kos mahasiswa', helmIncluded:true, helmCount:2,
-    description:'Motor premium dengan performa tinggi. Cocok untuk perjalanan jauh. Termasuk 2 helm full-face.',
-    photo:MOTOR_PHOTOS.nmax, isOpen:true },
-  { id:'m4', sellerId:'u1', brand:'Honda', name:'Scoopy', year:2022, pricePerHour:10000, pricePerDay:70000,
-    location:'Pos 1 UNAI', locationDetail:'Depan gerbang utama kampus', helmIncluded:true, helmCount:1,
-    description:'Motor retro yang stylish. Cocok untuk jalan-jalan santai. Termasuk 1 helm.',
-    photo:MOTOR_PHOTOS.scoopy, isOpen:true },
-  { id:'m5', sellerId:'u2', brand:'Yamaha', name:'Mio M3', year:2020, pricePerHour:7000, pricePerDay:50000,
-    location:'Pos 2 UNAI', locationDetail:'Samping parkiran fakultas', helmIncluded:false, helmCount:0,
-    description:'Motor murah meriah, cocok untuk kebutuhan mendadak. Helm tidak termasuk.',
-    photo:MOTOR_PHOTOS.mio, isOpen:true },
-  { id:'m6', sellerId:'u3', brand:'Honda', name:'PCX 160', year:2023, pricePerHour:18000, pricePerDay:120000,
-    location:'Gerbang Belakang UNAI', locationDetail:'Dekat kos mahasiswa', helmIncluded:true, helmCount:2,
-    description:'Motor premium dengan fitur lengkap. Termasuk 2 helm dan sarung tangan.',
-    photo:MOTOR_PHOTOS.pcx, isOpen:false }
-];
-
 let state={
   currentUser:null, users:[], motors:[], rentals:[], reviews:[],
   chats:[], notifications:[], 
+  withdrawals:[],
   buyerTab:'browse', sellerTab:'dashboard', adminTab:'dashboard',
   commissionPayments:[], auditLogs:[], settings:null,
   adminUI:{commFilter:'pending',commQ:'',userFilter:'all',userQ:'',motorQ:'',rentalFilter:'all',rentalQ:'',moreTab:'settings'},
@@ -632,18 +594,40 @@ let state={
 /* ============================================================
    PERSISTENCE & HELPERS
    ============================================================ */
+let stateHydrated=false,stateSaveTimer=null,stateSyncChain=Promise.resolve(),lastSyncedState=null,stateRetryCount=0;
+const persistentKeys=['users','motors','rentals','reviews','chats','notifications','commissionPayments','auditLogs','settings'];
+function cloneStateValue(value){return JSON.parse(JSON.stringify(value));}
 function saveState(){
-  try {
-    localStorage.setItem(STORAGE_KEY,JSON.stringify({
-      users:state.users, motors:state.motors, rentals:state.rentals,
-      reviews:state.reviews, chats:state.chats, notifications:state.notifications,
-      currentUser:state.currentUser,
-      commissionPayments:state.commissionPayments, auditLogs:state.auditLogs, settings:state.settings
-    }));
-  } catch(e){
-    console.warn('Storage quota exceeded',e);
-    toast('Penyimpanan browser penuh','warning');
-  }
+  if(!stateHydrated||!state.currentUser?.apiManaged)return;
+  clearTimeout(stateSaveTimer);
+  stateSaveTimer=setTimeout(async()=>{
+    const snapshot={};const payload={};
+    for(const key of persistentKeys){
+      snapshot[key]=cloneStateValue(state[key]);
+      if(JSON.stringify(snapshot[key])!==JSON.stringify(lastSyncedState?.[key])){
+        if(key==='users')payload.users=state.users.filter(u=>u.id===state.currentUser.id);
+        else if(key==='motors')payload.motors=state.currentUser.role==='admin'?state.motors:state.motors.filter(m=>m.sellerId===state.currentUser.id);
+        else if(key==='rentals')payload.rentals=state.currentUser.role==='admin'?state.rentals:state.rentals.filter(r=>r.buyerId===state.currentUser.id||r.sellerId===state.currentUser.id);
+        else if(key==='reviews')payload.reviews=state.currentUser.role==='admin'?state.reviews:state.reviews.filter(r=>r.buyerId===state.currentUser.id);
+        else if(key==='chats')payload.chats=state.chats.filter(m=>m.senderId===state.currentUser.id||m.receiverId===state.currentUser.id);
+        else if(key==='notifications')payload.notifications=state.notifications.filter(n=>n.userId===state.currentUser.id||n.rentalId);
+        else if(key==='commissionPayments')payload.commissionPayments=state.currentUser.role==='admin'?state.commissionPayments:state.commissionPayments.filter(c=>c.sellerId===state.currentUser.id);
+        else if(key==='auditLogs')payload.auditLogs=state.currentUser.role==='admin'?state.auditLogs:[];
+        else if(key==='settings')payload.settings=state.currentUser.role==='admin'?state.settings:null;
+      }
+    }
+    if(!Object.keys(payload).length)return;
+    try{
+      stateSyncChain=stateSyncChain.then(()=>apiRequest('/api/state',{method:'PUT',body:JSON.stringify(payload)}));
+      await stateSyncChain;
+      lastSyncedState=snapshot;
+      stateRetryCount=0;
+    }catch(error){
+      stateSyncChain=Promise.resolve();console.error('RentGo sync failed:',error);
+      if(stateRetryCount<3){stateRetryCount++;stateSaveTimer=setTimeout(()=>saveState(),1000*stateRetryCount);}
+      else{stateRetryCount=0;toast('Perubahan belum tersinkron. Periksa koneksi lalu coba lagi.','error');}
+    }
+  },350);
 }
 function applySettings(){
   const s=state.settings||(state.settings=JSON.parse(JSON.stringify(DEFAULT_SETTINGS)));
@@ -654,37 +638,26 @@ function applySettings(){
   PLATFORM_BANK.dueDate='Tanggal '+s.dueDay+' setiap bulan';
 }
 function loadState(){
-  const raw=localStorage.getItem(STORAGE_KEY);
-  if(!raw){
-    state.users=JSON.parse(JSON.stringify(SEED_USERS));
-    state.motors=JSON.parse(JSON.stringify(SEED_MOTORS));
-  } else {
-    try {
-      const d=JSON.parse(raw);
-      state.users=d.users||JSON.parse(JSON.stringify(SEED_USERS));
-      state.motors=d.motors||JSON.parse(JSON.stringify(SEED_MOTORS));
-      state.rentals=d.rentals||[];
-      state.reviews=d.reviews||[];
-      state.chats=d.chats||[];
-      state.notifications=d.notifications||[];
-      state.commissionPayments=d.commissionPayments||[];
-      state.auditLogs=d.auditLogs||[];
-      state.settings=d.settings||null;
-      // sambungkan kembali ke objek user terbaru (agar status suspend/saldo selalu terkini)
-      state.currentUser=d.currentUser&&d.currentUser.role!=='admin'?(state.users.find(x=>x.id===d.currentUser.id)||null):null;
-    } catch(e){
-      state.users=JSON.parse(JSON.stringify(SEED_USERS));
-      state.motors=JSON.parse(JSON.stringify(SEED_MOTORS));
-    }
-  }
-  // pastikan akun admin selalu ada (juga untuk data lama)
+  state.users=[];state.motors=[];state.rentals=[];state.reviews=[];state.chats=[];state.notifications=[];
+  state.commissionPayments=[];state.auditLogs=[];state.withdrawals=[];state.currentUser=null;state.settings=JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
   applySettings();
-  saveState();
+}
+function clearAppData(){
+  stateHydrated=false;lastSyncedState=null;state.currentUser=null;
+  state.users=[];state.motors=[];state.rentals=[];state.reviews=[];state.chats=[];state.notifications=[];state.commissionPayments=[];state.auditLogs=[];state.withdrawals=[];
 }
 
 function uid(p='id'){ return p+'_'+Date.now()+'_'+Math.random().toString(36).slice(2,7); }
 function rupiah(n){ return 'Rp'+Math.round(n).toLocaleString('id-ID'); }
 function esc(s){ return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+async function imageDataForApi(file,maxBytes=350000){
+  const bitmap=await createImageBitmap(file);
+  const scale=Math.min(1,1400/Math.max(bitmap.width,bitmap.height));
+  const canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(bitmap.width*scale));canvas.height=Math.max(1,Math.round(bitmap.height*scale));
+  const ctx=canvas.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.drawImage(bitmap,0,0,canvas.width,canvas.height);bitmap.close?.();
+  for(const quality of [.80,.68,.56,.44,.32]){const data=canvas.toDataURL('image/jpeg',quality);if(data.length<=maxBytes)return data;}
+  throw new Error('Foto terlalu besar setelah diperkecil. Pilih foto yang lebih kecil.');
+}
 function formatTime(ms){
   if(ms<0)ms=0;
   const s=Math.floor(ms/1000),h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=s%60;
@@ -725,14 +698,10 @@ function renderAvatar(user,size=38){
 function toggleTheme(){
   document.body.classList.toggle('dark');
   const isDark=document.body.classList.contains('dark');
-  localStorage.setItem('rentgo_theme',isDark?'dark':'light');
   const btn=document.getElementById('themeBtn');
   if(btn)btn.innerHTML=`<i class="fa-solid ${isDark?'fa-sun':'fa-moon'}"></i>`;
 }
-function applyTheme(){
-  const theme=localStorage.getItem('rentgo_theme');
-  if(theme==='dark')document.body.classList.add('dark');
-}
+function applyTheme(){}
 applyTheme();
 
 function toast(msg,type='info'){
@@ -817,13 +786,21 @@ function rememberApiUser(user){
   state.users=state.users.filter(u=>u.id!==user.id);
   state.users.push(normalized);
   state.currentUser=normalized;
-  saveState();
 }
 async function syncBackend(){
   try{
-    const [session,listings]=await Promise.all([apiRequest('/api/auth/me'),apiRequest('/api/motors')]);
-    if(session.user){rememberApiUser(session.user);}
-    state.motors=listings.motors||[];
+    const session=await apiRequest('/api/auth/me');
+    if(!session.user){clearAppData();render();return;}
+    const data=await apiRequest('/api/data');
+    state.users=(data.users||[]).map(u=>({...u,apiManaged:u.id===session.user.id,bank:u.bank||(u.bankName?{bankName:u.bankName,accountNumber:u.accountNumber,accountHolder:u.accountHolder}:undefined)}));
+    state.currentUser=state.users.find(u=>u.id===session.user.id)||{...session.user,apiManaged:true};
+    state.motors=data.motors||[];state.rentals=data.rentals||[];state.reviews=data.reviews||[];
+    state.chats=data.chats||[];state.notifications=data.notifications||[];
+    state.withdrawals=data.withdrawals||[];
+    state.commissionPayments=data.commissionPayments||[];state.auditLogs=data.auditLogs||[];
+    state.settings=data.settings||JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
+    stateHydrated=true;applySettings();
+    lastSyncedState={};for(const key of persistentKeys)lastSyncedState[key]=cloneStateValue(state[key]);
     render();
   }catch(error){console.info('RentGo API is not connected yet:',error.message);}
 }
@@ -921,18 +898,15 @@ function renderAuth(){
       try{
         const result=await apiRequest('/api/auth/login',{method:'POST',body:JSON.stringify({email,password})});
         if(result.user.role!=='admin'&&result.user.role!==selectedRole){await apiRequest('/api/auth/logout',{method:'POST'});toast('Pilih jenis akun yang sesuai','error');return;}
-        rememberApiUser(result.user);toast(`Selamat datang, ${result.user.name}!`,'success');render();
+        rememberApiUser(result.user);toast(`Selamat datang, ${result.user.name}!`,'success');await syncBackend();
       }catch(error){
-        const demo=state.users.find(u=>u.role!=='admin'&&u.email===email&&u.password===password&&u.role===selectedRole);
-        if(!demo){toast(error.message.includes('Failed to fetch')?'API tidak terhubung. Periksa deployment dan DATABASE_URL.':error.message,'error');return;}
-        if(demo.suspended){toast('Akun ditangguhkan'+(demo.suspendReason?': '+demo.suspendReason:'. Hubungi admin.'),'error');return;}
-        state.currentUser=demo;saveState();toast(`Mode demo: selamat datang, ${demo.name}!`,'success');render();
+        toast(error.message.includes('Failed to fetch')?'API tidak terhubung. Periksa deployment dan DATABASE_URL.':error.message,'error');return;
       }
     } else {
       const name=document.getElementById('regName').value.trim();
       const phone=document.getElementById('regPhone').value.trim();
       if(!name||!phone){toast('Nama dan nomor WhatsApp wajib diisi','error');return;}
-      if(state.users.find(u=>u.email===email)){toast('Email sudah terdaftar secara lokal','error');return;}
+      if(state.users.find(u=>u.email===email)){toast('Email sudah terdaftar','error');return;}
       const bank={bankName:'',accountNumber:'',accountHolder:''};
       if(selectedRole==='seller'){
         bank.bankName=document.getElementById('regBank').value;
@@ -944,7 +918,7 @@ function renderAuth(){
       }
       try{
         const result=await apiRequest('/api/auth/register',{method:'POST',body:JSON.stringify({name,email,password,role:selectedRole,phone,bank:selectedRole==='seller'?bank:undefined})});
-        rememberApiUser(result.user);toast('Akun berhasil dibuat!','success');render();
+        rememberApiUser(result.user);toast('Akun berhasil dibuat!','success');await syncBackend();
       }catch(error){toast(error.message.includes('Failed to fetch')?'API tidak terhubung. Periksa deployment dan DATABASE_URL.':error.message,'error');}
     }
   };
@@ -1647,7 +1621,7 @@ function attachHeaderHandlers(tabs){
   document.getElementById('logoutBtn').onclick=async()=>{
     if(!confirm('Yakin keluar dari akun?'))return;
     try{await apiRequest('/api/auth/logout',{method:'POST'});}catch(e){}
-    state.currentUser=null;
+    clearAppData();
     state.buyerTab='browse';state.sellerTab='dashboard';
     state.filterStatus='all';state.searchQuery='';
     saveState();render();toast('Kamu telah keluar','info');
@@ -1679,17 +1653,17 @@ function attachBuyerBrowseHandlers(){
 }
 function attachSellerHandlers(){
   document.querySelectorAll('[data-toggle-motor]').forEach(el=>{
-    el.onchange=()=>{
+    el.onchange=async()=>{
       const motor=state.motors.find(m=>m.id===el.dataset.toggleMotor);
-      if(motor){if(motor.adminBlocked){toast('Motor ini diblokir admin'+(motor.blockReason?': '+motor.blockReason:''),'error');render();return;}motor.isOpen=el.checked;saveState();toast(`Motor ${motor.name} ${motor.isOpen?'dibuka':'ditutup'}`,motor.isOpen?'success':'info');render();}
+      if(motor){if(motor.adminBlocked){toast('Motor ini diblokir admin'+(motor.blockReason?': '+motor.blockReason:''),'error');render();return;}try{await apiRequest('/api/motors',{method:'PATCH',body:JSON.stringify({id:motor.id,isOpen:el.checked})});motor.isOpen=el.checked;saveState();toast(`Motor ${motor.name} ${motor.isOpen?'dibuka':'ditutup'}`,motor.isOpen?'success':'info');render();}catch(error){el.checked=motor.isOpen;toast(error.message,'error');}}
     };
   });
   document.querySelectorAll('[data-delete-motor]').forEach(btn=>{
-    btn.onclick=()=>{
+    btn.onclick=async()=>{
       const id=btn.dataset.deleteMotor;
       if(isMotorRented(id)){toast('Tidak bisa hapus motor yang sedang disewa','error');return;}
       if(!confirm('Yakin hapus motor ini?'))return;
-      state.motors=state.motors.filter(m=>m.id!==id);saveState();toast('Motor dihapus','success');render();
+      try{await apiRequest('/api/motors',{method:'DELETE',body:JSON.stringify({id})});state.motors=state.motors.filter(m=>m.id!==id);saveState();toast('Motor dihapus','success');render();}catch(error){toast(error.message,'error');}
     };
   });
   document.querySelectorAll('[data-edit-motor]').forEach(btn=>{btn.onclick=()=>openMotorForm(btn.dataset.editMotor);});
@@ -1697,15 +1671,13 @@ function attachSellerHandlers(){
   if(addBtn)addBtn.onclick=()=>openMotorForm(null);
   
   const withdraw=document.getElementById('withdrawBtn');
-  if(withdraw)withdraw.onclick=()=>{
+  if(withdraw)withdraw.onclick=async()=>{
     const u=state.users.find(x=>x.id===state.currentUser.id);
     if(!u.bank){toast('Tambahkan rekening terlebih dahulu','error');return;}
     if(!u.balance||u.balance<=0){toast('Saldo tidak mencukupi','error');return;}
     const amount=u.balance;
     if(!confirm(`Tarik saldo ${rupiah(amount)} ke ${u.bank.bankName} ${maskAccount(u.bank.accountNumber)}?`))return;
-    u.balance=0;saveState();
-    toast(`Penarikan ${rupiah(amount)} berhasil diproses`,'success');
-    render();
+    try{await apiRequest('/api/withdrawals',{method:'POST',body:JSON.stringify({amount})});toast(`Permintaan penarikan ${rupiah(amount)} berhasil dikirim`,'success');}catch(error){toast(error.message,'error');}
   };
   
   const editBank=document.getElementById('editBankBtn');
@@ -1729,11 +1701,11 @@ function attachActionButtons(){
   document.querySelectorAll('[data-confirm-return]').forEach(btn=>{btn.onclick=(e)=>{e.stopPropagation();confirmReturn(btn.dataset.confirmReturn);};});
   document.querySelectorAll('[data-review]').forEach(btn=>{btn.onclick=(e)=>{e.stopPropagation();openReviewModal(btn.dataset.review);};});
   document.querySelectorAll('[data-pay]').forEach(btn=>{btn.onclick=(e)=>{e.stopPropagation();openPaymentModal(btn.dataset.pay);};});
-  document.querySelectorAll('[data-cancel]').forEach(btn=>{btn.onclick=(e)=>{
+  document.querySelectorAll('[data-cancel]').forEach(btn=>{btn.onclick=async(e)=>{
     e.stopPropagation();
     if(confirm('Batalkan pesanan ini?')){
       const r=state.rentals.find(x=>x.id===btn.dataset.cancel);
-      if(r){ state.rentals=state.rentals.filter(x=>x.id!==r.id); saveState(); render(); toast('Pesanan dibatalkan','info'); }
+      if(r){try{await apiRequest('/api/rentals',{method:'PATCH',body:JSON.stringify({id:r.id,action:'cancel',value:'Dibatalkan oleh penyewa'})});await syncBackend();toast('Pesanan dibatalkan','info');}catch(error){toast(error.message,'error');} }
     }
   };});
 }
@@ -1746,13 +1718,10 @@ function attachChatButtons(){
 /* ============================================================
    RENTAL FLOW & PAYMENT
    ============================================================ */
-function confirmPickup(rentalId){
+async function confirmPickup(rentalId){
   const r=state.rentals.find(x=>x.id===rentalId);
   if(!r||r.status!=='booked')return;
-  r.status='active';
-  r.startTime=new Date().toISOString();
-  r.pickupConfirmedAt=new Date().toISOString();
-  saveState();
+  try{await apiRequest('/api/rentals',{method:'PATCH',body:JSON.stringify({id:r.id,action:'pickup'})});await syncBackend();}catch(error){toast(error.message,'error');return;}
   const motor=state.motors.find(m=>m.id===r.motorId);
   const buyer=state.users.find(u=>u.id===r.buyerId);
   pushNotif(r.buyerId,'booking','Motor Diambil',`Timer untuk ${motor?.name||'motor'} telah dimulai.`,r.id);
@@ -1761,25 +1730,12 @@ function confirmPickup(rentalId){
   render();
 }
 
-function confirmReturn(rentalId){
+async function confirmReturn(rentalId){
   const r=state.rentals.find(x=>x.id===rentalId);
   if(!r||r.status!=='active')return;
   if(!confirm('Konfirmasi motor telah dikembalikan dengan baik?'))return;
   
-  r.status='completed';
-  r.completedAt=new Date().toISOString();
-  
-  // Seller menerima 100% dana, tapi mencatat komisi yang harus dibayar ke platform
-  r.commission=Math.round(r.totalPrice*COMMISSION_RATE);
-  r.sellerPayout=r.totalPrice; 
-  r.commissionPaid = false;
-  r.commissionPending = false;
-  
-  // Tambahkan ke saldo seller
-  const seller=state.users.find(u=>u.id===r.sellerId);
-  if(seller){seller.balance=(seller.balance||0)+r.sellerPayout;}
-  
-  saveState();
+  try{await apiRequest('/api/rentals',{method:'PATCH',body:JSON.stringify({id:r.id,action:'return'})});await syncBackend();}catch(error){toast(error.message,'error');return;}
   const motor=state.motors.find(m=>m.id===r.motorId);
   pushNotif(r.buyerId,'payment','Rental Selesai',`Terima kasih! Rental ${motor?.name||'motor'} selesai. Jangan lupa beri rating.`,r.id);
   pushNotif(r.sellerId,'payment','Rental Selesai',`Dana telah masuk ke Saldo Bersih Anda. Tagihan komisi ${Math.round(COMMISSION_RATE*100)}% telah ditambahkan ke Dashboard.`,r.id);
@@ -1848,12 +1804,11 @@ function openPaymentModal(rentalId) {
     const proofUpload = document.getElementById('proofUpload');
     proofUpload.onclick = () => proofInput.click();
     
-    proofInput.onchange = (e) => {
+    proofInput.onchange = async(e) => {
       const file = e.target.files[0];
       if(!file) return;
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        proofPhoto = ev.target.result;
+      try{
+        proofPhoto = await imageDataForApi(file);
         document.getElementById('proofArea').innerHTML = `
           <div class="photo-preview">
             <img src="${proofPhoto}">
@@ -1874,21 +1829,19 @@ function openPaymentModal(rentalId) {
           document.getElementById('proofUpload').onclick = () => proofInput.click();
           submitBtn.disabled = true;
         };
-      };
-      reader.readAsDataURL(file);
+      }catch(error){toast(error.message,'error');}
     };
   }
   
   document.getElementById('closePayBtn').onclick = () => overlay.remove();
   document.querySelector('.modal-close').onclick = () => overlay.remove();
   
-  submitBtn.onclick = () => {
+  submitBtn.onclick = async () => {
     if(!proofPhoto) return;
     
-    r.status = 'pending_verification';
-    r.paymentProofPhoto = proofPhoto;
-    r.paymentSubmittedAt = new Date().toISOString();
-    saveState();
+    submitBtn.disabled=true;
+    try{await apiRequest('/api/rentals',{method:'PATCH',body:JSON.stringify({id:r.id,action:'submitProof',value:proofPhoto})});await syncBackend();}
+    catch(error){submitBtn.disabled=false;toast(error.message,'error');return;}
     
     const buyer = state.users.find(u=>u.id===r.buyerId);
     const motor = state.motors.find(m=>m.id===r.motorId);
@@ -1945,11 +1898,8 @@ function openVerifyBuyerPaymentModal(rentalId) {
   document.getElementById('closeVerifyBtn').onclick = () => overlay.remove();
   document.querySelector('.modal-close').onclick = () => overlay.remove();
   
-  document.getElementById('confirmVerifyBtn').onclick = () => {
-    r.status = 'booked'; // Pembayaran lunas, menunggu motor diambil
-    r.paymentStatus = 'paid';
-    r.paymentVerifiedAt = new Date().toISOString();
-    saveState();
+  document.getElementById('confirmVerifyBtn').onclick = async () => {
+    try{await apiRequest('/api/rentals',{method:'PATCH',body:JSON.stringify({id:r.id,action:'verifyPayment'})});await syncBackend();}catch(error){toast(error.message,'error');return;}
     
     pushNotif(r.buyerId, 'payment', 'Pembayaran Diverifikasi', `Pembayaran Anda untuk ${state.motors.find(m=>m.id===r.motorId)?.name} telah diverifikasi oleh Seller. Silakan ambil motor.`, r.id);
     
@@ -1958,13 +1908,10 @@ function openVerifyBuyerPaymentModal(rentalId) {
     render();
   };
   
-  document.getElementById('rejectVerifyBtn').onclick = () => {
+  document.getElementById('rejectVerifyBtn').onclick = async () => {
     if(!confirm('Tolak bukti pembayaran ini? Buyer harus mengunggah ulang.')) return;
     
-    r.status = 'pending_payment'; // Kembalikan ke status belum bayar
-    r.paymentProofPhoto = null;
-    r.paymentStatus = 'rejected';
-    saveState();
+    try{await apiRequest('/api/rentals',{method:'PATCH',body:JSON.stringify({id:r.id,action:'rejectPayment'})});await syncBackend();}catch(error){toast(error.message,'error');return;}
     
     pushNotif(r.buyerId, 'danger', 'Bukti Pembayaran Ditolak', `Bukti pembayaran Anda ditolak oleh Seller. Silakan unggah ulang bukti yang sesuai.`, r.id);
     
@@ -2019,18 +1966,16 @@ function openQrisUploadForm() {
     };
   }
   
-  qrisInput.onchange = (e) => {
+  qrisInput.onchange = async(e) => {
     const file = e.target.files[0];
     if(!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      photoData = ev.target.result;
+    try{
+      photoData = await imageDataForApi(file);
       document.getElementById('qrisArea').innerHTML = `
         <div class="photo-preview" style="height:250px"><img src="${photoData}" style="object-fit:contain;background:#fff"><button class="remove" id="removeQris"><i class="fa-solid fa-xmark"></i></button></div>
       `;
       bindQrisEvents();
-    };
-    reader.readAsDataURL(file);
+    }catch(error){toast(error.message,'error');}
   };
   
   bindQrisEvents();
@@ -2157,15 +2102,11 @@ function openMotorDetail(motorId){
   
   const bookBtn=document.getElementById('bookBtn');
   if(bookBtn){
-    bookBtn.onclick=()=>{
-      const total=selectedDuration*m.pricePerHour;
-      const rental={
-        id:uid('r'),motorId:m.id,buyerId:state.currentUser.id,sellerId:m.sellerId,
-        startTime:null,durationHours:selectedDuration,paymentMethod:'QRIS',
-        totalPrice:total,status:'pending_payment',createdAt:new Date().toISOString(),
-        paymentStatus:'unpaid'
-      };
-      state.rentals.push(rental);saveState();
+    bookBtn.onclick=async()=>{
+      bookBtn.disabled=true;
+      let rental;
+      try{const result=await apiRequest('/api/rentals',{method:'POST',body:JSON.stringify({motorId:m.id,durationHours:selectedDuration,paymentMethod:'QRIS'})});rental=result.rental;await syncBackend();}
+      catch(error){bookBtn.disabled=false;toast(error.message,'error');return;}
       overlay.remove();
       
       // Buka Modal Pembayaran
@@ -2223,20 +2164,17 @@ function openMotorForm(motorId){
       bindPhotoEvents();
     };
   }
-  photoInput.onchange=(e)=>{
+  photoInput.onchange=async(e)=>{
     const file=e.target.files[0];
     if(!file)return;
-    if(file.size>5*1024*1024){toast('Ukuran file max 5MB','error');return;}
-    const reader=new FileReader();
-    reader.onload=(ev)=>{
-      photoData=ev.target.result;
+    try{
+      photoData=await imageDataForApi(file);
       document.getElementById('photoArea').innerHTML=`
         <div class="photo-preview"><img src="${photoData}"><button class="remove" id="removePhoto"><i class="fa-solid fa-xmark"></i></button></div>
         <div class="photo-upload" id="photoUpload2"><i class="fa-solid fa-camera"></i><div class="text">Ganti foto</div></div>
       `;
       bindPhotoEvents();
-    };
-    reader.readAsDataURL(file);
+    }catch(error){toast(error.message,'error');}
   };
   bindPhotoEvents();
   document.getElementById('saveMotorBtn').onclick=async()=>{
@@ -2359,17 +2297,14 @@ function openProfileModal(){
   overlay.onclick=(e)=>{if(e.target===overlay)overlay.remove();};
   const photoInput=document.getElementById('profilePhotoInput');
   document.getElementById('profilePhoto').onclick=()=>photoInput.click();
-  photoInput.onchange=(e)=>{
+  photoInput.onchange=async(e)=>{
     const file=e.target.files[0];
     if(!file)return;
-    if(file.size>2*1024*1024){toast('Ukuran foto max 2MB','error');return;}
-    const reader=new FileReader();
-    reader.onload=(ev)=>{
-      photoData=ev.target.result;
+    try{
+      photoData=await imageDataForApi(file);
       document.getElementById('profilePhoto').innerHTML=`<img src="${photoData}"><div class="overlay-cam"><i class="fa-solid fa-camera"></i></div>`;
       document.getElementById('profilePhoto').onclick=()=>photoInput.click();
-    };
-    reader.readAsDataURL(file);
+    }catch(error){toast(error.message,'error');}
   };
   document.getElementById('saveProfileBtn').onclick=()=>{
     const name=document.getElementById('profName').value.trim();
@@ -2429,7 +2364,7 @@ function toggleUserMenu(){
       else if(action==='logout'){
         if(!confirm('Yakin keluar dari akun?'))return;
         apiRequest('/api/auth/logout',{method:'POST'}).catch(()=>{});
-        state.currentUser=null;
+        clearAppData();
         state.buyerTab='browse';state.sellerTab='dashboard';
         saveState();render();toast('Kamu telah keluar','info');
       }
@@ -2573,7 +2508,7 @@ function openChat(rentalId){
       previewArea.innerHTML='';
     }
   }
-  function sendMessage(){
+  async function sendMessage(){
     const text=inputEl.value.trim();
     if(!text&&!pendingPhoto)return;
     const msg={
@@ -2582,20 +2517,22 @@ function openChat(rentalId){
       text:text||'',photo:pendingPhoto||null,
       read:false,createdAt:new Date().toISOString()
     };
-    state.chats.push(msg);saveState();
+    try{
+      const result=await apiRequest('/api/chats',{method:'POST',body:JSON.stringify({rentalId,text:msg.text,photo:msg.photo})});
+      state.chats.push(result.message);
+      if(lastSyncedState)lastSyncedState.chats=cloneStateValue(state.chats);
+    }catch(error){toast(error.message,'error');return;}
     inputEl.value='';pendingPhoto=null;updatePreview();
     renderMessages();
     let notifMsg=text?text.slice(0,40):'[Foto]';
     pushNotif(otherId,'chat','Pesan Baru',`${state.currentUser.name}: ${notifMsg}${(text.length>40)?'...':''}`,rentalId);
   }
   attachEl.onclick=()=>photoInput.click();
-  photoInput.onchange=(e)=>{
+  photoInput.onchange=async(e)=>{
     const file=e.target.files[0];
     if(!file)return;
     if(file.size>5*1024*1024){toast('Ukuran foto max 5MB','error');return;}
-    const reader=new FileReader();
-    reader.onload=(ev)=>{pendingPhoto=ev.target.result;updatePreview();};
-    reader.readAsDataURL(file);
+    try{pendingPhoto=await imageDataForApi(file);updatePreview();}catch(error){toast(error.message,'error');}
     e.target.value='';
   };
   sendEl.onclick=sendMessage;
@@ -2650,10 +2587,15 @@ function openReviewModal(rentalId){
       document.getElementById('ratingText').textContent=ratingTexts[rating];
     };
   });
-  document.getElementById('submitReview').onclick=()=>{
+  document.getElementById('submitReview').onclick=async()=>{
     const comment=document.getElementById('reviewComment').value.trim();
     const review={id:uid('rv'),rentalId,motorId:r.motorId,buyerId:state.currentUser.id,sellerId:r.sellerId,rating,comment:comment||'Tidak ada komentar.',createdAt:new Date().toISOString()};
-    state.reviews.push(review);saveState();
+    const submit=document.getElementById('submitReview');submit.disabled=true;
+    try{
+      const result=await apiRequest('/api/reviews',{method:'POST',body:JSON.stringify({rentalId:r.id,rating,comment:comment||'Tidak ada komentar.'})});
+      state.reviews.push(result.review);
+      if(lastSyncedState)lastSyncedState.reviews=cloneStateValue(state.reviews);
+    }catch(error){submit.disabled=false;toast(error.message,'error');return;}
     pushNotif(r.sellerId,'review','Ulasan Baru',`${state.currentUser.name} memberi rating ${rating}/5 untuk ${motor?.name||'motor'}.`,r.id);
     toast('Terima kasih atas ulasanmu!','success');
     overlay.remove();render();
@@ -2930,19 +2872,17 @@ function openCommissionPaymentModal() {
   }
   bindUpload();
 
-  proofInput.onchange=(e)=>{
+  proofInput.onchange=async(e)=>{
     const file=e.target.files[0];
     if(!file)return;
     if(file.size>5*1024*1024){toast('Ukuran file max 5MB','error');return;}
-    const reader=new FileReader();
-    reader.onload=(ev)=>{
-      proofPhoto=ev.target.result;
+    try{
+      proofPhoto=await imageDataForApi(file);
       overlay.querySelector('#commProofArea').innerHTML=`
         <div class="photo-preview"><img src="${proofPhoto}"><button class="remove" type="button"><i class="fa-solid fa-xmark"></i></button></div>`;
       submitBtn.disabled=false;
       bindUpload();
-    };
-    reader.readAsDataURL(file);
+    }catch(error){toast(error.message,'error');}
   };
 
   overlay.querySelector('#closeCommBtn').onclick=()=>overlay.remove();
@@ -3347,11 +3287,12 @@ function openAdminUserDetail(id){
   `);
 }
 
-function adminToggleSuspend(id){
+async function adminToggleSuspend(id){
   const u=state.users.find(x=>x.id===id);
   if(!u||u.role==='admin')return;
   if(u.suspended){
     if(!confirm(`Aktifkan kembali akun ${u.name}?`))return;
+    try{await apiRequest('/api/users',{method:'PATCH',body:JSON.stringify({id,suspended:false})});}catch(error){toast(error.message,'error');return;}
     u.suspended=false;u.suspendReason='';
     logAdmin('Aktifkan akun',u.name);
     saveState();
@@ -3361,6 +3302,7 @@ function adminToggleSuspend(id){
     const reason=prompt(`Alasan menangguhkan ${u.name}?${live?'\n\nPERHATIAN: pengguna ini masih punya rental berjalan.':''}`);
     if(reason===null)return;
     if(!reason.trim()){toast('Alasan wajib diisi','error');return;}
+    try{await apiRequest('/api/users',{method:'PATCH',body:JSON.stringify({id,suspended:true,suspendReason:reason.trim()})});}catch(error){toast(error.message,'error');return;}
     u.suspended=true;u.suspendReason=reason.trim();
     logAdmin('Tangguhkan akun',`${u.name} · ${u.suspendReason}`);
     saveState();
@@ -3369,7 +3311,7 @@ function adminToggleSuspend(id){
   render();
 }
 
-function adminResetPassword(id){
+async function adminResetPassword(id){
   const u=state.users.find(x=>x.id===id);
   if(!u||u.role==='admin')return;
   if(!confirm(`Reset password ${u.name}? Password lama tidak berlaku lagi.`))return;
@@ -3377,7 +3319,7 @@ function adminResetPassword(id){
   const arr=new Uint32Array(8);
   (window.crypto||window.msCrypto).getRandomValues(arr);
   const tmp=Array.from(arr).map(n=>chars[n%chars.length]).join('');
-  u.password=tmp;
+  try{await apiRequest('/api/users',{method:'POST',body:JSON.stringify({id,password:tmp})});}catch(error){toast(error.message,'error');return;}
   logAdmin('Reset password',u.name);
   saveState();
   openModal(`
@@ -3443,11 +3385,12 @@ function adminToggleMotorBlock(id){
   render();
 }
 
-function adminDeleteMotor(id){
+async function adminDeleteMotor(id){
   const m=state.motors.find(x=>x.id===id);
   if(!m)return;
   if(isMotorRented(id)){toast('Tidak bisa menghapus motor yang sedang disewa','error');return;}
   if(!confirm(`Hapus permanen ${m.name} milik ${sellerName(m.sellerId)}?`))return;
+  try{await apiRequest('/api/motors',{method:'DELETE',body:JSON.stringify({id})});}catch(error){toast(error.message,'error');return;}
   state.motors=state.motors.filter(x=>x.id!==id);
   logAdmin('Hapus motor',`${m.name} (${sellerName(m.sellerId)})`);
   saveState();
@@ -3537,9 +3480,12 @@ function openAdminRentalDetail(id){
 
 function renderAdminMore(){
   const ui=state.adminUI;
-  const tabs=filterTabsHtml('moreTab',ui.moreTab,[['settings','Pengaturan'],['broadcast','Pengumuman'],['reviews','Ulasan'],['logs','Log Aktivitas']]);
+  const tabs=filterTabsHtml('moreTab',ui.moreTab,[['settings','Pengaturan'],['withdrawals','Penarikan'],['broadcast','Pengumuman'],['reviews','Ulasan'],['logs','Log Aktivitas']]);
   let body='';
-  if(ui.moreTab==='settings'){
+  if(ui.moreTab==='withdrawals'){
+    const list=state.withdrawals||[];
+    body=`<div class="page-title"><h1>Permintaan Penarikan</h1><p>Permintaan saldo seller yang menunggu diproses.</p></div>${list.length?`<div class="adm-card">${list.map(w=>`<div class="adm-list-row"><div class="l"><b>${esc(w.seller_name||sellerName(w.seller_id))} · ${rupiah(w.amount)}</b><span>${esc(w.bank_name)} · ${esc(maskAccount(w.account_number))} · ${formatDate(w.requested_at)}</span><span>Status: ${esc(w.status)}</span></div>${w.status==='pending'?`<div class="r"><button class="btn btn-success btn-xs" data-adm="withdrawPaid" data-id="${w.id}">Tandai Dibayar</button> <button class="btn btn-danger btn-xs" data-adm="withdrawReject" data-id="${w.id}">Tolak</button></div>`:''}</div>`).join('')}</div>`:`<div class="empty"><i class="fa-solid fa-money-bill-transfer"></i><h3>Belum ada permintaan penarikan</h3></div>`}`;
+  } else if(ui.moreTab==='settings'){
     const st=state.settings;
     body=`
       <div class="adm-card">
@@ -3568,11 +3514,13 @@ function renderAdminMore(){
       </div>
       <div class="adm-card">
         <h3><i class="fa-solid fa-database" style="color:var(--primary);margin-right:6px"></i>Data</h3>
-        <div class="adm-note">Seluruh data tersimpan di browser ini (localStorage). Lakukan backup secara berkala.</div>
+        <div class="adm-note">Data RentGo tersinkron lewat API. Untuk migrasi satu kali, buat akun di RentGo versi baru dengan email yang sama seperti akun lama, ekspor data lama, lalu impor di sini. Data akun yang belum cocok emailnya akan dilewati.</div>
         <div class="adm-actions">
           <button class="btn btn-secondary btn-sm" data-adm="backup"><i class="fa-solid fa-download"></i> Backup Data (JSON)</button>
+          <button class="btn btn-primary btn-sm" data-adm="importLegacy"><i class="fa-solid fa-upload"></i> Impor Data Lama</button>
           <button class="btn btn-danger btn-sm" data-adm="resetAll"><i class="fa-solid fa-triangle-exclamation"></i> Reset Semua Data</button>
         </div>
+        <input id="legacyImportFile" class="hidden" type="file" accept="application/json,.json">
       </div>`;
   } else if(ui.moreTab==='broadcast'){
     body=`
@@ -3638,6 +3586,32 @@ function attachAdminHandlers(){
       adminAction(el.dataset.adm,el.dataset);
     };
   }
+  const legacyInput=document.getElementById('legacyImportFile');
+  if(legacyInput)legacyInput.onchange=async()=>{
+    const file=legacyInput.files?.[0];legacyInput.value='';if(!file)return;
+    if(file.size>25_000_000){toast('File backup melebihi batas 25 MB.','error');return;}
+    try{
+      const parsed=JSON.parse(await file.text());
+      if(!Array.isArray(parsed.users)||!Array.isArray(parsed.motors))throw new Error('File bukan backup RentGo yang dikenal.');
+      if(!confirm(`Impor backup dengan ${parsed.users.length} akun dan ${parsed.motors.length} motor? Buat akun di database dengan email yang sama terlebih dahulu. Proses aman diulang untuk file yang sama.`))return;
+      let omittedPhotos=0;
+      for(const [list,field] of [[parsed.users,'photo'],[parsed.users,'qrisPhoto'],[parsed.motors,'photo'],[parsed.rentals||[],'paymentProofPhoto'],[parsed.chats||[],'photo'],[parsed.commissionPayments||[],'proofPhoto']]){
+        for(const record of list){
+          const src=record?.[field];if(typeof src!=='string'||!src.startsWith('data:image/')||src.length<=100000)continue;
+          try{const blob=await (await fetch(src)).blob();record[field]=await imageDataForApi(new File([blob],'legacy-image',{type:blob.type||'image/jpeg'}),95000);}catch{record[field]=null;omittedPhotos++;}
+        }
+      }
+      const safeBackup={...parsed,users:parsed.users.map(oldUser=>{const {password,password_hash,...user}=oldUser||{};return user;}),currentUser:undefined,_migrationPhotosOmitted:omittedPhotos};
+      const payload=JSON.stringify({backup:safeBackup});
+      if(payload.length>3_800_000)throw new Error('Data backup tetap lebih besar dari 3,8 MB setelah kompresi foto. Ekspor data dengan lebih sedikit foto, lalu impor kembali.');
+      const result=await apiRequest('/api/admin/import-legacy',{method:'POST',body:payload});
+      if(result.alreadyImported){toast('File backup ini sudah pernah diimpor.','info');return;}
+      await syncBackend();
+      const c=result.counts||{};
+      const retryMessage=result.retryRequired?" Buat akun yang belum cocok lalu impor ulang file.":"";
+      toast("Impor selesai: "+(c.motors||0)+" motor, "+(c.rentals||0)+" pesanan, "+(c.chats||0)+" chat, "+(c.withdrawals||0)+" penarikan. Akun tidak cocok: "+(c.usersUnmatched||0)+"; foto dilewati: "+((c.photosOmitted||0)+omittedPhotos)+"."+retryMessage,"success");
+    }catch(error){toast(error.message||'Impor gagal. Periksa file dan coba lagi.','error');}
+  };
   if(window._adminFocusId){
     const el=document.getElementById(window._adminFocusId);
     window._adminFocusId=null;
@@ -3645,7 +3619,7 @@ function attachAdminHandlers(){
   }
 }
 
-function adminAction(action,d){
+async function adminAction(action,d){
   switch(action){
     case 'goto':
       state.adminTab=d.to;
@@ -3658,7 +3632,7 @@ function adminAction(action,d){
     case 'markPaid': {
       const note=prompt(`Tandai lunas manual untuk ${sellerName(d.seller)} (${periodLabel(d.period)}).\nCatatan (mis. "Setor tunai", boleh kosong):`);
       if(note===null)return;
-      if(adminMarkBillPaid(d.seller,d.period,note.trim())){toast('Tagihan ditandai lunas','success');render();}
+      if(adminMarkBillPaid(d.seller,d.period,note.trim())){saveState();toast('Tagihan ditandai lunas','success');render();}
       break;
     }
     case 'userDetail': openAdminUserDetail(d.id);break;
@@ -3670,6 +3644,7 @@ function adminAction(action,d){
     case 'reviewDelete': {
       if(!confirm('Hapus ulasan ini?'))return;
       const rv=state.reviews.find(x=>x.id===d.id);
+      try{await apiRequest('/api/reviews',{method:'DELETE',body:JSON.stringify({id:d.id})});}catch(error){toast(error.message,'error');return;}
       state.reviews=state.reviews.filter(x=>x.id!==d.id);
       logAdmin('Hapus ulasan',rv?`${sellerName(rv.buyerId)} · ${rv.rating}/5 · ${(rv.comment||'').slice(0,60)}`:'');
       saveState();toast('Ulasan dihapus','success');render();break;
@@ -3681,21 +3656,27 @@ function adminAction(action,d){
       downloadCSV(`RentGo_LogAdmin_${todayStamp()}.csv`,['Waktu','Admin','Aksi','Detail'],
         state.auditLogs.map(l=>[formatDate(l.createdAt),l.adminName,l.action,l.detail]));break;
     case 'saveSettings': adminSaveSettings();break;
+    case 'withdrawPaid': case 'withdrawReject': {
+      const status=action==='withdrawPaid'?'paid':'rejected';
+      const note=status==='rejected'?prompt('Alasan menolak penarikan:')||'Ditolak admin':'';
+      apiRequest('/api/withdrawals',{method:'PATCH',body:JSON.stringify({id:d.id,status,note})}).then(()=>syncBackend()).catch(e=>toast(e.message,'error'));
+      break;
+    }
     case 'changePw': adminChangePassword();break;
     case 'sendBroadcast': adminSendBroadcast();break;
     case 'backup': {
-      const blob=new Blob([localStorage.getItem(STORAGE_KEY)||'{}'],{type:'application/json'});
+      const blob=new Blob([JSON.stringify({users:state.users,motors:state.motors,rentals:state.rentals,reviews:state.reviews,chats:state.chats,notifications:state.notifications,commissionPayments:state.commissionPayments,auditLogs:state.auditLogs,withdrawals:state.withdrawals,settings:state.settings},null,2)],{type:'application/json'});
       const url=URL.createObjectURL(blob);
       const a=document.createElement('a');a.href=url;a.download=`RentGo_Backup_${todayStamp()}.json`;a.click();
       URL.revokeObjectURL(url);
       logAdmin('Backup data','Unduh backup JSON');saveState();
       toast('Backup diunduh','success');break;
     }
+    case 'importLegacy': document.getElementById('legacyImportFile')?.click();break;
     case 'resetAll': {
       const t=prompt('PERINGATAN: semua data (pengguna, motor, transaksi, chat, komisi) akan dihapus.\nKetik RESET untuk melanjutkan:');
       if(t!=='RESET'){if(t!==null)toast('Reset dibatalkan','info');return;}
-      localStorage.removeItem(STORAGE_KEY);
-      location.reload();break;
+      apiRequest('/api/admin/reset',{method:'POST'}).then(()=>location.reload()).catch(e=>toast(e.message,'error'));break;
     }
   }
 }
@@ -3758,19 +3739,18 @@ function adminSaveSettings(){
   toast('Pengaturan disimpan','success');
   render();
 }
-function adminChangePassword(){
-  const admin=state.users.find(u=>u.id===state.currentUser.id);
+async function adminChangePassword(){
   const oldP=document.getElementById('pwOld').value;
   const n1=document.getElementById('pwNew').value;
   const n2=document.getElementById('pwNew2').value;
-  if(oldP!==admin.password){toast('Password saat ini salah','error');return;}
   if(n1.length<8){toast('Password baru minimal 8 karakter','error');return;}
   if(n1!==n2){toast('Konfirmasi password tidak cocok','error');return;}
-  admin.password=n1;
-  logAdmin('Ganti password admin','');
-  saveState();
-  ['pwOld','pwNew','pwNew2'].forEach(i=>document.getElementById(i).value='');
-  toast('Password admin diubah','success');
+  try{
+    await apiRequest('/api/auth/password',{method:'POST',body:JSON.stringify({oldPassword:oldP,newPassword:n1})});
+    logAdmin('Ganti password admin','');saveState();
+    ['pwOld','pwNew','pwNew2'].forEach(i=>document.getElementById(i).value='');
+    toast('Password admin diubah','success');
+  }catch(error){toast(error.message,'error');}
 }
 function adminSendBroadcast(){
   const target=document.getElementById('bcTarget').value;
@@ -3813,7 +3793,7 @@ function startTimers(){
 
 function render(){
   if(state.currentUser&&state.currentUser.suspended&&state.currentUser.role!=='admin'){
-    state.currentUser=null;saveState();toast('Akun kamu ditangguhkan oleh admin','error');
+    apiRequest('/api/auth/logout',{method:'POST'}).catch(()=>{});clearAppData();toast('Akun kamu ditangguhkan oleh admin','error');
   }
   if(!state.currentUser)renderAuth();
   else if(state.currentUser.role==='admin')renderAdmin();

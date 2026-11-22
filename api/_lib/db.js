@@ -41,9 +41,12 @@ export async function currentUser(req, sql) {
   const [session] = await sql`
     SELECT users.id, users.name, users.email, users.role, users.phone,
       users.bank_name AS "bankName", users.account_number AS "accountNumber",
-      users.account_holder AS "accountHolder"
+      users.account_holder AS "accountHolder", users.balance, users.photo_url AS photo,
+      users.qris_photo_url AS "qrisPhoto", users.suspended,
+      users.suspend_reason AS "suspendReason"
     FROM sessions JOIN users ON users.id = sessions.user_id
     WHERE sessions.token_hash = ${tokenHash} AND sessions.expires_at > now()
+      AND (users.suspended=false OR users.role='admin')
   `;
   return session || null;
 }
