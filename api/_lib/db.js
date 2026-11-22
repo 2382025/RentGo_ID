@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { neon } from '@neondatabase/serverless';
 
 export function getDb() {
@@ -36,12 +37,13 @@ export function clearSessionCookie() {
 export async function currentUser(req, sql) {
   const token = getCookie(req, 'rentgo_session');
   if (!token) return null;
+  const tokenHash = createHash('sha256').update(token).digest('hex');
   const [session] = await sql`
     SELECT users.id, users.name, users.email, users.role, users.phone,
       users.bank_name AS "bankName", users.account_number AS "accountNumber",
       users.account_holder AS "accountHolder"
     FROM sessions JOIN users ON users.id = sessions.user_id
-    WHERE sessions.token_hash = ${token} AND sessions.expires_at > now()
+    WHERE sessions.token_hash = ${tokenHash} AND sessions.expires_at > now()
   `;
   return session || null;
 }
