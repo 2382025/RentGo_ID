@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash text NOT NULL,
   role text NOT NULL CHECK (role IN ('buyer', 'seller', 'admin')),
   phone text NOT NULL DEFAULT '',
+  store_name text NOT NULL DEFAULT '',
   bank_name text,
   account_number text,
   account_holder text,
@@ -45,6 +46,7 @@ CREATE INDEX IF NOT EXISTS motors_available_idx ON motors (is_open, created_at D
 
 -- Safe to rerun when updating a database created from an earlier version of this schema.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS phone text NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS store_name text NOT NULL DEFAULT '';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS bank_name text;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS account_number text;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS account_holder text;

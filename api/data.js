@@ -8,7 +8,7 @@ export default async function handler(req,res){
     if(!user)return json(res,401,{error:'Sign in required.'});
     const admin=user.role==='admin';
     const [users,motors,rentals,reviews,chats,notifications,commissions,audit,settings,withdrawals]=await Promise.all([
-      sql`SELECT id,name,email,role,phone,balance,bank_name AS "bankName",account_number AS "accountNumber",account_holder AS "accountHolder",photo_url AS photo,qris_photo_url AS "qrisPhoto",suspended,suspend_reason AS "suspendReason" FROM users WHERE role<>'admin' OR ${admin} ORDER BY name`,
+      sql`SELECT id,name,email,role,phone,store_name AS "storeName",balance,bank_name AS "bankName",account_number AS "accountNumber",account_holder AS "accountHolder",photo_url AS photo,qris_photo_url AS "qrisPhoto",suspended,suspend_reason AS "suspendReason" FROM users WHERE role<>'admin' OR ${admin} ORDER BY name`,
       admin?sql`SELECT id,seller_id AS "sellerId",brand,name,year,price_per_hour AS "pricePerHour",price_per_day AS "pricePerDay",location,location_detail AS "locationDetail",description,photo,helm_included AS "helmIncluded",helm_count AS "helmCount",is_open AS "isOpen",admin_blocked AS "adminBlocked",block_reason AS "blockReason",created_at AS "createdAt" FROM motors WHERE is_deleted=false ORDER BY created_at DESC`:sql`SELECT id,seller_id AS "sellerId",brand,name,year,price_per_hour AS "pricePerHour",price_per_day AS "pricePerDay",location,location_detail AS "locationDetail",description,photo,helm_included AS "helmIncluded",helm_count AS "helmCount",is_open AS "isOpen",admin_blocked AS "adminBlocked",block_reason AS "blockReason",created_at AS "createdAt" FROM motors WHERE is_deleted=false AND (is_open=true OR seller_id=${user.id}) ORDER BY created_at DESC`,
       admin?sql`SELECT * FROM rentals ORDER BY created_at DESC`:sql`SELECT * FROM rentals WHERE buyer_id=${user.id} OR seller_id=${user.id} ORDER BY created_at DESC`,
       sql`SELECT id,rental_id AS "rentalId",motor_id AS "motorId",buyer_id AS "buyerId",seller_id AS "sellerId",rating,comment,created_at AS "createdAt" FROM reviews ORDER BY created_at DESC`,
@@ -19,14 +19,18 @@ export default async function handler(req,res){
       sql`SELECT commission_rate AS "commissionRate",due_day AS "dueDay",bank_name AS "bankName",account_number AS "accountNumber",account_holder AS "accountHolder" FROM platform_settings WHERE id=1`,
       admin?sql`SELECT w.*,u.name AS seller_name FROM withdrawal_requests w JOIN users u ON u.id=w.seller_id ORDER BY w.requested_at DESC`:user.role==='seller'?sql`SELECT * FROM withdrawal_requests WHERE seller_id=${user.id} ORDER BY requested_at DESC`:Promise.resolve([])
     ]);
-    const payments=[];
-    for(const cp of commissions){
-      const ids=await sql`SELECT rental_id FROM commission_payment_rentals WHERE commission_payment_id=${cp.id}`;
-      payments.push({id:cp.id,sellerId:cp.seller_id,sellerName:cp.seller_name,period:cp.period,rentalIds:ids.map(x=>x.rental_id),amount:Number(cp.amount),proofPhoto:cp.proof_photo_url,status:cp.status,submittedAt:cp.submitted_at,reviewedAt:cp.reviewed_at,reviewedBy:cp.reviewed_by,adminNote:cp.admin_note,manual:cp.manual});
+    const paymentRentalIds=commissions.length
+      ? await sql`SELECT commission_payment_id,rental_id FROM commission_payment_rentals WHERE commission_payment_id=ANY(${commissions.map(cp=>cp.id)})`
+      : [];
+    const paymentIdsByCommission=new Map();
+    for(const row of paymentRentalIds){
+      const ids=paymentIdsByCommission.get(row.commission_payment_id)||[];
+      ids.push(row.rental_id);paymentIdsByCommission.set(row.commission_payment_id,ids);
     }
+    const payments=commissions.map(cp=>({id:cp.id,sellerId:cp.seller_id,sellerName:cp.seller_name,period:cp.period,rentalIds:paymentIdsByCommission.get(cp.id)||[],amount:Number(cp.amount),proofPhoto:cp.proof_photo_url,status:cp.status,submittedAt:cp.submitted_at,reviewedAt:cp.reviewed_at,reviewedBy:cp.reviewed_by,adminNote:cp.admin_note,manual:cp.manual}));
     const mappedRentals=rentals.map(r=>({id:r.id,motorId:r.motor_id,buyerId:r.buyer_id,sellerId:r.seller_id,startTime:r.start_time,durationHours:r.duration_hours,durationUnit:r.duration_unit||'hour',durationValue:r.duration_value||r.duration_hours,paymentMethod:r.payment_method,totalPrice:Number(r.total_price),status:r.status,paymentStatus:r.payment_status,paymentProofPhoto:r.payment_proof_url,paymentSubmittedAt:r.payment_submitted_at,paymentVerifiedAt:r.payment_verified_at,completedAt:r.completed_at,cancelledAt:r.cancelled_at,cancelReason:r.cancel_reason,commission:Number(r.commission),commissionPaid:r.commission_paid,commissionPending:r.commission_pending,commissionPaidAt:r.commission_paid_at,commissionPaymentId:r.commission_payment_id,createdAt:r.created_at}));
-    const safeUsers=users.map(u=>u.id===user.id||admin?u:{id:u.id,name:u.name,role:u.role,phone:u.phone,qrisPhoto:u.qrisPhoto,suspended:u.suspended});
+    const safeUsers=users.map(u=>u.id===user.id||admin?u:{id:u.id,name:u.name,role:u.role,storeName:u.storeName,phone:u.phone,qrisPhoto:u.qrisPhoto,suspended:u.suspended});
     const [settingsRow]=settings;
-    return json(res,200,{users:safeUsers,motors,rentals:mappedRentals,reviews,chats,notifications,commissionPayments:payments,auditLogs:audit,settings:settingsRow?{commissionRate:Number(settingsRow.commissionRate),dueDay:settingsRow.dueDay,bank:{bankName:settingsRow.bankName,accountNumber:settingsRow.accountNumber,accountHolder:settingsRow.accountHolder}}:null,withdrawals});
+    return json(res,200,{currentUserId:user.id,users:safeUsers,motors,rentals:mappedRentals,reviews,chats,notifications,commissionPayments:payments,auditLogs:audit,settings:settingsRow?{commissionRate:Number(settingsRow.commissionRate),dueDay:settingsRow.dueDay,bank:{bankName:settingsRow.bankName,accountNumber:settingsRow.accountNumber,accountHolder:settingsRow.accountHolder}}:null,withdrawals});
   }catch(error){return handleError(res,error);}
 }

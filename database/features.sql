@@ -6,6 +6,7 @@
 ALTER TABLE users ADD COLUMN IF NOT EXISTS balance bigint NOT NULL DEFAULT 0;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_url text;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS qris_photo_url text;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS store_name text NOT NULL DEFAULT '';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended boolean NOT NULL DEFAULT false;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS suspend_reason text;
 

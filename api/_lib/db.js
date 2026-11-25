@@ -40,7 +40,7 @@ export async function currentUser(req, sql) {
   if (!token) return null;
   const tokenHash = createHash('sha256').update(token).digest('hex');
   const [session] = await sql`
-    SELECT users.id, users.name, users.email, users.role, users.phone,
+    SELECT users.id, users.name, users.email, users.role, users.phone, users.store_name AS "storeName",
       users.bank_name AS "bankName", users.account_number AS "accountNumber",
       users.account_holder AS "accountHolder", users.balance, users.photo_url AS photo,
       users.qris_photo_url AS "qrisPhoto", users.suspended,

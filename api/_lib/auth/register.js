@@ -5,7 +5,7 @@ import { getDb, json, methodNotAllowed, handleError, sessionCookie } from '../db
 export default async function handler(req, res) {
   if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
   try {
-    const { name, email, password, role, phone, bank } = req.body || {};
+    const { name, email, password, role, phone, bank, storeName } = req.body || {};
     if (typeof name !== 'string' || name.trim().length < 2 || name.trim().length > 100 ||
         typeof email !== 'string' || !/^\S+@\S+\.\S+$/.test(email) ||
         typeof password !== 'string' || password.length < 8 || password.length > 72 ||
@@ -16,14 +16,15 @@ export default async function handler(req, res) {
     const passwordHash = await bcrypt.hash(password, 12);
     const id = randomBytes(16).toString('hex');
     if (phone !== undefined && (typeof phone !== 'string' || phone.length > 40)) return json(res, 400, { error: 'Phone number is invalid.' });
+    if (role === 'seller' && (typeof storeName !== 'string' || storeName.trim().length < 2 || storeName.trim().length > 100)) return json(res, 400, { error: 'Seller store name must be between 2 and 100 characters.' });
     if (role === 'seller' && (!bank || typeof bank.bankName !== 'string' || !bank.bankName.trim() || typeof bank.accountNumber !== 'string' || !bank.accountNumber.trim() || typeof bank.accountHolder !== 'string' || !bank.accountHolder.trim())) {
       return json(res, 400, { error: 'Seller bank details are required.' });
     }
     const [user] = await sql`
-      INSERT INTO users (id, name, email, password_hash, role, phone, bank_name, account_number, account_holder)
-      VALUES (${id}, ${name.trim()}, ${email.trim().toLowerCase()}, ${passwordHash}, ${role}, ${phone || ''}, ${bank?.bankName || null}, ${bank?.accountNumber || null}, ${bank?.accountHolder || null})
+      INSERT INTO users (id, name, email, password_hash, role, phone, store_name, bank_name, account_number, account_holder)
+      VALUES (${id}, ${name.trim()}, ${email.trim().toLowerCase()}, ${passwordHash}, ${role}, ${phone || ''}, ${role==='seller'?storeName.trim():''}, ${bank?.bankName || null}, ${bank?.accountNumber || null}, ${bank?.accountHolder || null})
       ON CONFLICT (email) DO NOTHING
-      RETURNING id, name, email, role, phone, bank_name AS "bankName", account_number AS "accountNumber", account_holder AS "accountHolder"
+      RETURNING id, name, email, role, phone, store_name AS "storeName", bank_name AS "bankName", account_number AS "accountNumber", account_holder AS "accountHolder"
     `;
     if (!user) return json(res, 409, { error: 'An account with this email already exists.' });
     const token = randomBytes(32).toString('hex');

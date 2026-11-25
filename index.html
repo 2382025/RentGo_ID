@@ -326,14 +326,18 @@ body.dark .chat-bubble.other{background:#334155;color:var(--text)}
 .notif-empty i{font-size:28px;color:var(--border);margin-bottom:8px;display:block}
 
 /* CHAT */
-.chat-container{display:flex;flex-direction:column;height:520px;max-height:80vh}
+.chat-container{display:flex;flex-direction:column;height:520px;max-height:80vh;min-height:0;overflow:hidden}
+.modal.modal-chat{display:flex;flex-direction:column;height:min(680px,calc(100vh - 32px));height:min(680px,calc(100dvh - 32px));max-height:calc(100vh - 32px);max-height:calc(100dvh - 32px);overflow:hidden}
+.modal-chat .chat-container{height:auto;max-height:none;flex:1;min-height:0}
+.modal-chat .chat-messages{min-height:0}
+.modal-chat .chat-input-area,.modal-chat .modal-footer{flex-shrink:0}
 .chat-header{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border);background:#fff}
 .chat-avatar{width:38px;height:38px;border-radius:50%;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex-shrink:0;overflow:hidden}
 .chat-avatar img{width:100%;height:100%;object-fit:cover}
 .chat-info{flex:1;min-width:0}
 .chat-info .name{font-size:13px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .chat-info .sub{font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.chat-messages{flex:1;overflow-y:auto;padding:14px;background:#f8fafc;display:flex;flex-direction:column;gap:10px}
+.chat-messages{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:14px;background:#f8fafc;display:flex;flex-direction:column;gap:10px}
 .chat-bubble{max-width:80%;padding:9px 13px;border-radius:14px;font-size:13px;line-height:1.5;word-wrap:break-word;position:relative;animation:fadeIn .2s}
 .chat-bubble.self{background:var(--primary);color:#fff;align-self:flex-end;border-bottom-right-radius:4px}
 .chat-bubble.other{background:#fff;color:var(--text);align-self:flex-start;border-bottom-left-radius:4px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
@@ -532,7 +536,11 @@ body.dark .adm-card{background:#1e293b;color:var(--text)}
   .active-rental-actions .btn{flex:1;min-width:0}
   .detail-grid{grid-template-columns:1fr}
   .balance-grid{grid-template-columns:1fr}
-  .chat-container{height:calc(100vh - 120px);max-height:none}
+  .modal-overlay.chat-overlay{padding:0;align-items:stretch}
+  .modal.modal-chat{width:100%;max-width:none;height:100vh;height:100dvh;max-height:100vh;max-height:100dvh;border-radius:0}
+  .modal-chat .chat-container{padding-bottom:0}
+  .modal-chat .chat-input-area{padding-bottom:10px}
+  .modal-chat .modal-footer{padding-bottom:calc(12px + env(safe-area-inset-bottom))}
   .history-meta{margin-left:52px;width:calc(100% - 52px);text-align:left;display:flex;justify-content:space-between;align-items:center}
   .modal{border-radius:16px}
   .modal-header{padding:14px 16px}
@@ -791,7 +799,7 @@ function exportRentalsCSV(scope='buyer'){
 async function apiRequest(path,options={}){
   const response=await fetch(path,{credentials:'same-origin',headers:{'Content-Type':'application/json',...(options.headers||{})},...options});
   const data=await response.json().catch(()=>({}));
-  if(!response.ok)throw new Error(data.error||`API request failed (${response.status})`);
+  if(!response.ok){const error=new Error(data.error||`API request failed (${response.status})`);error.status=response.status;throw error;}
   return data;
 }
 function rememberApiUser(user){
@@ -802,21 +810,13 @@ function rememberApiUser(user){
   state.currentUser=normalized;
 }
 async function syncBackend(){
-  let sessionUser=null;
-  let failedStage='session';
+  const loginWasJustAttempted=Boolean(state.currentUser?.apiManaged);
   try{
-    const session=await apiRequest('/api/auth/me');
-    if(!session.user){
-      const loginWasJustAttempted=Boolean(state.currentUser?.apiManaged);
-      clearAppData();render();
-      if(loginWasJustAttempted)toast('Login berhasil, tetapi sesi tidak terbaca. Coba masuk lagi.','error');
-      return false;
-    }
-    sessionUser=session.user;
-    failedStage='data';
     const data=await apiRequest('/api/data');
-    state.users=(data.users||[]).map(u=>({...u,apiManaged:u.id===session.user.id,bank:u.bank||(u.bankName?{bankName:u.bankName,accountNumber:u.accountNumber,accountHolder:u.accountHolder}:undefined)}));
-    state.currentUser=state.users.find(u=>u.id===session.user.id)||{...session.user,apiManaged:true};
+    const userId=data.currentUserId||state.currentUser?.id;
+    if(!userId){clearAppData();render();return false;}
+    state.users=(data.users||[]).map(u=>({...u,apiManaged:u.id===userId,bank:u.bank||(u.bankName?{bankName:u.bankName,accountNumber:u.accountNumber,accountHolder:u.accountHolder}:undefined)}));
+    state.currentUser=state.users.find(u=>u.id===userId)||{...state.currentUser,apiManaged:true};
     state.motors=data.motors||[];state.rentals=data.rentals||[];state.reviews=data.reviews||[];
     state.chats=data.chats||[];state.notifications=data.notifications||[];
     state.withdrawals=data.withdrawals||[];
@@ -827,8 +827,11 @@ async function syncBackend(){
     render();
     return true;
   }catch(error){
-    console.info('RentGo API sync failed:',failedStage,error.message);
-    if(sessionUser)renderDataSyncError(sessionUser,failedStage,error);
+    console.info('RentGo API sync failed:',error.message);
+    if(error.status===401){
+      clearAppData();render();
+      if(loginWasJustAttempted)toast('Login berhasil, tetapi sesi tidak terbaca. Coba masuk lagi.','error');
+    }else if(state.currentUser?.apiManaged)renderDataSyncError(state.currentUser,'data',error);
     return false;
   }
 }
@@ -864,12 +867,13 @@ async function refreshBackendData(){
       }
     }
   }catch(error){
+    if(error.status===401){await syncBackend();return;}
     console.info('RentGo background refresh failed:',error.message);
   }finally{realtimeBusy=false;}
 }
 function startRealtimeSync(){
   if(realtimeTimer)clearInterval(realtimeTimer);
-  realtimeTimer=setInterval(refreshBackendData,10000);
+  realtimeTimer=setInterval(()=>{if(!document.hidden)refreshBackendData();},3000);
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshBackendData();});
   window.addEventListener('focus',refreshBackendData);
 }
@@ -926,6 +930,8 @@ function renderAuth(){
           <div class="form-group"><label>Password</label><input type="password" id="authPassword" placeholder="Minimal 8 karakter"></div>
           <div id="bankFields" class="hidden">
             <div class="form-section">
+              <div class="section-label"><i class="fa-solid fa-store"></i> Identitas Toko</div>
+              <div class="form-group"><label>Nama Toko</label><input type="text" id="regStoreName" maxlength="100" placeholder="Contoh: Rental Motor Kampus"></div>
               <div class="section-label"><i class="fa-solid fa-building-columns"></i> Data Rekening Payout</div>
               <div class="form-group">
                 <label>Nama Bank</label>
@@ -999,7 +1005,10 @@ function renderAuth(){
       if(!name||!phone){toast('Nama dan nomor WhatsApp wajib diisi','error');return;}
       if(state.users.find(u=>u.email===email)){toast('Email sudah terdaftar','error');return;}
       const bank={bankName:'',accountNumber:'',accountHolder:''};
+      let storeName='';
       if(selectedRole==='seller'){
+        storeName=document.getElementById('regStoreName').value.trim();
+        if(storeName.length<2||storeName.length>100){toast('Nama toko harus 2–100 karakter','error');return;}
         bank.bankName=document.getElementById('regBank').value;
         bank.accountNumber=document.getElementById('regAccountNumber').value.trim();
         bank.accountHolder=document.getElementById('regAccountHolder').value.trim();
@@ -1008,7 +1017,7 @@ function renderAuth(){
         }
       }
       try{
-        const result=await apiRequest('/api/auth/register',{method:'POST',body:JSON.stringify({name,email,password,role:selectedRole,phone,bank:selectedRole==='seller'?bank:undefined})});
+        const result=await apiRequest('/api/auth/register',{method:'POST',body:JSON.stringify({name,email,password,role:selectedRole,phone,storeName:selectedRole==='seller'?storeName:undefined,bank:selectedRole==='seller'?bank:undefined})});
         rememberApiUser(result.user);
         if(await syncBackend())toast('Akun berhasil dibuat!','success');
       }catch(error){toast(error.message.includes('Failed to fetch')?'API tidak terhubung. Periksa deployment dan DATABASE_URL.':error.message,'error');}
@@ -1166,7 +1175,7 @@ function renderMotorCard(m){
         </div>
         <div class="motor-footer">
           <div class="motor-price">${rupiah(m.pricePerHour)}<small>/jam</small></div>
-          <div class="seller-tag"><i class="fa-solid fa-store"></i> ${esc(seller?seller.name:'Seller')}</div>
+          <div class="seller-tag"><i class="fa-solid fa-store"></i> ${esc(seller?.storeName||'Toko Rental')}</div>
         </div>
       </div>
     </div>
@@ -1228,7 +1237,7 @@ function renderActiveRentalBanner(r){
     <div class="active-rental">
       <div class="active-rental-info">
         <h3><i class="fa-solid fa-circle" style="color:${overdue?'#fca5a5':'#4ade80'};font-size:10px;margin-right:8px"></i>${esc(motor.name)} sedang digunakan</h3>
-        <p>Mulai: ${formatDate(r.startTime)} · ${formatRentalDuration(r)} · Seller: ${esc(seller?.name||'-')}</p>
+        <p>Mulai: ${formatDate(r.startTime)} · ${formatRentalDuration(r)} · Toko: ${esc(seller?.storeName||'Toko Rental')}</p>
       </div>
       <div class="timer-display ${overdue?'overdue':''}" data-timer data-start="${r.startTime}" data-duration="${r.durationHours}">
         <div class="label">${overdue?'Terlambat':'Sisa Waktu'}</div>
@@ -1268,7 +1277,7 @@ function renderBuyerHistory(){
             <div class="history-icon ${cls}"><i class="fa-solid ${icon}"></i></div>
             <div class="history-info">
               <h4>${esc(motor?motor.name:'Motor')}</h4>
-              <p>${esc(seller?seller.name:'-')} · ${formatDate(r.createdAt)}</p>
+              <p>${esc(seller?.storeName||'Toko Rental')} · ${formatDate(r.createdAt)}</p>
               <p>${formatRentalDuration(r)} · QRIS</p>
             </div>
             <div class="history-meta">
@@ -1797,7 +1806,7 @@ function attachActionButtons(){
     e.stopPropagation();
     if(confirm('Batalkan pesanan ini?')){
       const r=state.rentals.find(x=>x.id===btn.dataset.cancel);
-      if(r){try{await apiRequest('/api/rentals',{method:'PATCH',body:JSON.stringify({id:r.id,action:'cancel',value:'Dibatalkan oleh penyewa'})});await syncBackend();toast('Pesanan dibatalkan','info');}catch(error){toast(error.message,'error');} }
+      if(r){try{const result=await apiRequest('/api/rentals',{method:'PATCH',body:JSON.stringify({id:r.id,action:'cancel',value:'Dibatalkan oleh penyewa'})});applyRentalUpdate(result.rental);toast('Pesanan dibatalkan','info');render();}catch(error){toast(error.message,'error');} }
     }
   };});
 }
@@ -1810,11 +1819,28 @@ function attachChatButtons(){
 /* ============================================================
    RENTAL FLOW & PAYMENT
    ============================================================ */
+function applyRentalUpdate(rental){
+  const index=state.rentals.findIndex(item=>item.id===rental.id);
+  if(index<0)state.rentals.unshift(rental);
+  else state.rentals[index]={...state.rentals[index],...rental};
+  if(state.currentUser?.role==='seller'&&rental.status==='completed'){
+    const updatedUser={...state.currentUser,balance:(Number(state.currentUser.balance)||0)+Number(rental.totalPrice||0)};
+    state.currentUser=updatedUser;
+    state.users=state.users.map(user=>user.id===updatedUser.id?updatedUser:user);
+  }
+  if(lastSyncedState){
+    lastSyncedState.rentals=cloneStateValue(state.rentals);
+    lastSyncedState.users=cloneStateValue(state.users);
+  }
+}
 async function confirmPickup(rentalId){
   if(state.currentUser?.role!=='seller')return;
   const r=state.rentals.find(x=>x.id===rentalId);
   if(!r||r.status!=='booked')return;
-  try{await apiRequest('/api/rentals',{method:'PATCH',body:JSON.stringify({id:r.id,action:'pickup'})});await syncBackend();}catch(error){toast(error.message,'error');return;}
+  const button=[...document.querySelectorAll('[data-confirm-pickup]')].find(el=>el.dataset.confirmPickup===rentalId);
+  if(button){button.disabled=true;button.innerHTML='<i class="fa-solid fa-spinner fa-spin"></i> Memproses...';}
+  let result;
+  try{result=await apiRequest('/api/rentals',{method:'PATCH',body:JSON.stringify({id:r.id,action:'pickup'})});applyRentalUpdate(result.rental);}catch(error){if(button){button.disabled=false;button.innerHTML='<i class="fa-solid fa-check"></i> Konfirmasi';}toast(error.message,'error');return;}
   const motor=state.motors.find(m=>m.id===r.motorId);
   const buyer=state.users.find(u=>u.id===r.buyerId);
   pushNotif(r.buyerId,'booking','Motor Diambil',`Timer untuk ${motor?.name||'motor'} telah dimulai.`,r.id);
@@ -1827,8 +1853,10 @@ async function confirmReturn(rentalId){
   const r=state.rentals.find(x=>x.id===rentalId);
   if(!r||r.status!=='active')return;
   if(!confirm('Konfirmasi motor telah dikembalikan dengan baik?'))return;
-  
-  try{await apiRequest('/api/rentals',{method:'PATCH',body:JSON.stringify({id:r.id,action:'return'})});await syncBackend();}catch(error){toast(error.message,'error');return;}
+  const button=[...document.querySelectorAll('[data-return],[data-confirm-return]')].find(el=>el.dataset.return===rentalId||el.dataset.confirmReturn===rentalId);
+  if(button){button.disabled=true;button.innerHTML='<i class="fa-solid fa-spinner fa-spin"></i> Memproses...';}
+  let result;
+  try{result=await apiRequest('/api/rentals',{method:'PATCH',body:JSON.stringify({id:r.id,action:'return'})});applyRentalUpdate(result.rental);}catch(error){if(button){button.disabled=false;button.innerHTML='<i class="fa-solid fa-flag-checkered"></i> Selesai';}toast(error.message,'error');return;}
   const motor=state.motors.find(m=>m.id===r.motorId);
   pushNotif(r.buyerId,'payment','Rental Selesai',`Terima kasih! Rental ${motor?.name||'motor'} selesai. Jangan lupa beri rating.`,r.id);
   pushNotif(r.sellerId,'payment','Rental Selesai',`Dana telah masuk ke Saldo Bersih Anda. Tagihan komisi ${Math.round(COMMISSION_RATE*100)}% telah ditambahkan ke Dashboard.`,r.id);
@@ -1935,8 +1963,10 @@ function openPaymentModal(rentalId) {
     if(!proofPhoto) return;
     
     submitBtn.disabled=true;
-    try{await apiRequest('/api/rentals',{method:'PATCH',body:JSON.stringify({id:r.id,action:'submitProof',value:proofPhoto})});await syncBackend();}
-    catch(error){submitBtn.disabled=false;toast(error.message,'error');return;}
+    submitBtn.innerHTML='<i class="fa-solid fa-spinner fa-spin"></i> Mengirim bukti...';
+    let result;
+    try{result=await apiRequest('/api/rentals',{method:'PATCH',body:JSON.stringify({id:r.id,action:'submitProof',value:proofPhoto})});applyRentalUpdate(result.rental);}
+    catch(error){submitBtn.disabled=false;submitBtn.innerHTML='<i class="fa-solid fa-paper-plane"></i> Kirim Bukti Pembayaran';toast(error.message,'error');return;}
     
     const buyer = state.users.find(u=>u.id===r.buyerId);
     const motor = state.motors.find(m=>m.id===r.motorId);
@@ -1994,7 +2024,8 @@ function openVerifyBuyerPaymentModal(rentalId) {
   document.querySelector('.modal-close').onclick = () => overlay.remove();
   
   document.getElementById('confirmVerifyBtn').onclick = async () => {
-    try{await apiRequest('/api/rentals',{method:'PATCH',body:JSON.stringify({id:r.id,action:'verifyPayment'})});await syncBackend();}catch(error){toast(error.message,'error');return;}
+    const button=document.getElementById('confirmVerifyBtn');button.disabled=true;button.innerHTML='<i class="fa-solid fa-spinner fa-spin"></i> Memverifikasi...';
+    try{const result=await apiRequest('/api/rentals',{method:'PATCH',body:JSON.stringify({id:r.id,action:'verifyPayment'})});applyRentalUpdate(result.rental);}catch(error){button.disabled=false;button.innerHTML='<i class="fa-solid fa-check-double"></i> Verifikasi Lunas';toast(error.message,'error');return;}
     
     pushNotif(r.buyerId, 'payment', 'Pembayaran Diverifikasi', `Pembayaran Anda untuk ${state.motors.find(m=>m.id===r.motorId)?.name} telah diverifikasi oleh Seller. Silakan ambil motor.`, r.id);
     
@@ -2005,8 +2036,8 @@ function openVerifyBuyerPaymentModal(rentalId) {
   
   document.getElementById('rejectVerifyBtn').onclick = async () => {
     if(!confirm('Tolak bukti pembayaran ini? Buyer harus mengunggah ulang.')) return;
-    
-    try{await apiRequest('/api/rentals',{method:'PATCH',body:JSON.stringify({id:r.id,action:'rejectPayment'})});await syncBackend();}catch(error){toast(error.message,'error');return;}
+    const button=document.getElementById('rejectVerifyBtn');button.disabled=true;button.innerHTML='<i class="fa-solid fa-spinner fa-spin"></i> Memproses...';
+    try{const result=await apiRequest('/api/rentals',{method:'PATCH',body:JSON.stringify({id:r.id,action:'rejectPayment'})});applyRentalUpdate(result.rental);}catch(error){button.disabled=false;button.innerHTML='<i class="fa-solid fa-xmark"></i> Tolak Bukti';toast(error.message,'error');return;}
     
     pushNotif(r.buyerId, 'danger', 'Bukti Pembayaran Ditolak', `Bukti pembayaran Anda ditolak oleh Seller. Silakan unggah ulang bukti yang sesuai.`, r.id);
     
@@ -2114,7 +2145,7 @@ function openMotorDetail(motorId){
           <div class="detail-item"><div class="label">Per Jam</div><div class="val" style="color:var(--primary)">${rupiah(m.pricePerHour)}</div></div>
           <div class="detail-item"><div class="label">Per Hari</div><div class="val" style="color:var(--primary)">${rupiah(m.pricePerDay)}</div></div>
           <div class="detail-item"><div class="label">Helm</div><div class="val">${m.helmIncluded?`${m.helmCount} helm`:'Tidak ada'}</div></div>
-          <div class="detail-item"><div class="label">Penyedia</div><div class="val">${esc(seller?seller.name:'-')}</div></div>
+          <div class="detail-item"><div class="label">Toko</div><div class="val">${esc(seller?.storeName||'Toko Rental')}</div></div>
         </div>
         <div class="section-title">Deskripsi</div>
         <p class="detail-desc">${esc(m.description)}</p>
@@ -2228,9 +2259,10 @@ function openMotorDetail(motorId){
   if(bookBtn){
     bookBtn.onclick=async()=>{
       bookBtn.disabled=true;
+      bookBtn.innerHTML='<i class="fa-solid fa-spinner fa-spin"></i> Membuat pesanan...';
       let rental;
-      try{const result=await apiRequest('/api/rentals',{method:'POST',body:JSON.stringify({motorId:m.id,durationUnit:selectedUnit,durationValue:selectedDuration,paymentMethod:'QRIS'})});rental=result.rental;await syncBackend();}
-      catch(error){bookBtn.disabled=false;toast(error.message,'error');return;}
+      try{const result=await apiRequest('/api/rentals',{method:'POST',body:JSON.stringify({motorId:m.id,durationUnit:selectedUnit,durationValue:selectedDuration,paymentMethod:'QRIS'})});rental=result.rental;applyRentalUpdate(rental);}
+      catch(error){bookBtn.disabled=false;bookBtn.innerHTML='<i class="fa-solid fa-qrcode"></i> Lanjut ke Pembayaran';toast(error.message,'error');return;}
       overlay.remove();
       
       // Buka Modal Pembayaran
@@ -2398,6 +2430,10 @@ function openProfileModal(){
         <div class="form-group"><label>No. WhatsApp</label><input type="tel" id="profPhone" value="${esc(u.phone||'')}" placeholder="0812-xxxx-xxxx"></div>
         ${u.role==='seller'?`
           <div class="form-section">
+            <div class="section-label"><i class="fa-solid fa-store"></i> Identitas Toko</div>
+            <div class="form-group"><label>Nama Toko</label><input type="text" id="profStoreName" maxlength="100" value="${esc(u.storeName||'')}" placeholder="Contoh: Rental Motor Kampus"></div>
+          </div>
+          <div class="form-section">
             <div class="section-label"><i class="fa-solid fa-building-columns"></i> Data Rekening</div>
             <div class="form-group">
               <label>Nama Bank</label>
@@ -2407,6 +2443,13 @@ function openProfileModal(){
             </div>
             <div class="form-group"><label>Nomor Rekening</label><input type="text" id="profBankAccount" value="${esc(u.bank?.accountNumber||'')}" inputmode="numeric"></div>
             <div class="form-group"><label>Atas Nama</label><input type="text" id="profBankHolder" value="${esc(u.bank?.accountHolder||'')}"></div>
+          </div>
+        `:''}
+        ${u.role==='buyer'||u.role==='seller'?`
+          <div class="form-section">
+            <div class="section-label"><i class="fa-solid fa-lock"></i> Reset Password</div>
+            <div class="form-group"><label>Password Baru</label><input type="password" id="profileNewPassword" minlength="8" maxlength="72" autocomplete="new-password" placeholder="Minimal 8 karakter"></div>
+            <button class="btn btn-secondary btn-sm" id="resetProfilePassword"><i class="fa-solid fa-key"></i> Simpan Password Baru</button>
           </div>
         `:''}
       </div>
@@ -2436,6 +2479,9 @@ function openProfileModal(){
     if(!name){toast('Nama wajib diisi','error');return;}
     u.name=name;u.phone=phone;u.photo=photoData;
     if(u.role==='seller'){
+      const storeName=document.getElementById('profStoreName').value.trim();
+      if(storeName.length<2||storeName.length>100){toast('Nama toko harus 2–100 karakter','error');return;}
+      u.storeName=storeName;
       const bankName=document.getElementById('profBankName').value;
       const accountNumber=document.getElementById('profBankAccount').value.trim();
       const accountHolder=document.getElementById('profBankHolder').value.trim();
@@ -2446,6 +2492,18 @@ function openProfileModal(){
     state.currentUser=u;saveState();
     toast('Profil berhasil disimpan','success');
     overlay.remove();render();
+  };
+  const resetPasswordBtn=document.getElementById('resetProfilePassword');
+  if(resetPasswordBtn)resetPasswordBtn.onclick=async()=>{
+    const passwordInput=document.getElementById('profileNewPassword');
+    const newPassword=passwordInput.value;
+    if(newPassword.length<8||newPassword.length>72){toast('Password baru harus 8–72 karakter','error');return;}
+    resetPasswordBtn.disabled=true;resetPasswordBtn.innerHTML='<i class="fa-solid fa-spinner fa-spin"></i> Menyimpan...';
+    try{
+      await apiRequest('/api/auth/password',{method:'POST',body:JSON.stringify({newPassword})});
+      passwordInput.value='';toast('Password berhasil diubah','success');
+    }catch(error){toast(error.message,'error');}
+    finally{resetPasswordBtn.disabled=false;resetPasswordBtn.innerHTML='<i class="fa-solid fa-key"></i> Simpan Password Baru';}
   };
 }
 
@@ -2566,13 +2624,13 @@ function openChat(rentalId){
   const motor=state.motors.find(m=>m.id===r.motorId);
   let pendingPhoto=null;
   const overlay=document.createElement('div');
-  overlay.className='modal-overlay';
+  overlay.className='modal-overlay chat-overlay';
   overlay.innerHTML=`
-    <div class="modal">
+    <div class="modal modal-chat">
       <div class="chat-container">
         <div class="chat-header">
           <div class="chat-avatar">${renderAvatar(other,38)}</div>
-          <div class="chat-info"><div class="name">${esc(other?.name||'-')}</div><div class="sub">${esc(motor?.name||'Motor')} · #${r.id.slice(-5)}</div></div>
+          <div class="chat-info"><div class="name">${esc(state.currentUser.role==='buyer'&&other?.role==='seller'?(other.storeName||'Toko Rental'):(other?.name||'-'))}</div><div class="sub">${esc(motor?.name||'Motor')} · #${r.id.slice(-5)}</div></div>
           <button class="modal-close" style="position:static"><i class="fa-solid fa-xmark"></i></button>
         </div>
         <div class="chat-messages" id="chatMessages"></div>
@@ -2591,8 +2649,24 @@ function openChat(rentalId){
     </div>
   `;
   document.body.appendChild(overlay);
-  overlay.querySelectorAll('.modal-close, .modal-close-btn').forEach(b=>b.onclick=()=>overlay.remove());
-  overlay.onclick=(e)=>{if(e.target===overlay)overlay.remove();};
+  let chatPollTimer=null,chatPollBusy=false;
+  const viewport=window.visualViewport;
+  const resizeChatToViewport=()=>{
+    if(!viewport)return;
+    overlay.style.top=`${viewport.offsetTop}px`;
+    overlay.style.height=`${viewport.height}px`;
+  };
+  const closeChat=()=>{
+    if(chatPollTimer)clearInterval(chatPollTimer);
+    viewport?.removeEventListener('resize',resizeChatToViewport);
+    viewport?.removeEventListener('scroll',resizeChatToViewport);
+    overlay.remove();
+  };
+  resizeChatToViewport();
+  viewport?.addEventListener('resize',resizeChatToViewport);
+  viewport?.addEventListener('scroll',resizeChatToViewport);
+  overlay.querySelectorAll('.modal-close, .modal-close-btn').forEach(b=>b.onclick=closeChat);
+  overlay.onclick=(e)=>{if(e.target===overlay)closeChat();};
   const msgsEl=document.getElementById('chatMessages');
   const inputEl=document.getElementById('chatInput');
   const sendEl=document.getElementById('chatSend');
@@ -2635,6 +2709,7 @@ function openChat(rentalId){
   async function sendMessage(){
     const text=inputEl.value.trim();
     if(!text&&!pendingPhoto)return;
+    sendEl.disabled=true;sendEl.innerHTML='<i class="fa-solid fa-spinner fa-spin"></i>';
     const msg={
       id:uid('c'),rentalId,
       senderId:state.currentUser.id,receiverId:otherId,
@@ -2645,7 +2720,8 @@ function openChat(rentalId){
       const result=await apiRequest('/api/chats',{method:'POST',body:JSON.stringify({rentalId,text:msg.text,photo:msg.photo})});
       state.chats.push(result.message);
       if(lastSyncedState)lastSyncedState.chats=cloneStateValue(state.chats);
-    }catch(error){toast(error.message,'error');return;}
+    }catch(error){sendEl.disabled=false;sendEl.innerHTML='<i class="fa-solid fa-paper-plane"></i>';toast(error.message,'error');return;}
+    sendEl.disabled=false;sendEl.innerHTML='<i class="fa-solid fa-paper-plane"></i>';
     inputEl.value='';pendingPhoto=null;updatePreview();
     renderMessages();
     let notifMsg=text?text.slice(0,40):'[Foto]';
@@ -2662,6 +2738,21 @@ function openChat(rentalId){
   sendEl.onclick=sendMessage;
   inputEl.onkeydown=(e)=>{if(e.key==='Enter')sendMessage();};
   renderMessages();
+  chatPollTimer=setInterval(async()=>{
+    if(document.hidden||chatPollBusy||!overlay.isConnected)return;
+    chatPollBusy=true;
+    try{
+      const data=await apiRequest(`/api/chats?rentalId=${encodeURIComponent(rentalId)}`);
+      const fresh=data.messages||[];
+      const current=state.chats.filter(message=>message.rentalId===rentalId);
+      if(JSON.stringify(current)!==JSON.stringify(fresh)){
+        state.chats=[...state.chats.filter(message=>message.rentalId!==rentalId),...fresh];
+        if(lastSyncedState)lastSyncedState.chats=cloneStateValue(state.chats);
+        renderMessages();
+      }
+    }catch(error){console.info('RentGo chat refresh failed:',error.message);}
+    finally{chatPollBusy=false;}
+  },2000);
   setTimeout(()=>inputEl.focus(),100);
 }
 

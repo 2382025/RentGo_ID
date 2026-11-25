@@ -15,7 +15,7 @@ export default async function handler(req,res){
     const profile=rows(body.users).find(x=>x.id===user.id);
     if(profile){
       for(const k of ['photo','qrisPhoto'])if(!photoOk(profile[k]))return json(res,400,{error:'Profile images must be 1 MB or smaller.'});
-      await sql`UPDATE users SET name=${String(profile.name||user.name).slice(0,100)},phone=${String(profile.phone||'').slice(0,40)},bank_name=${profile.bank?.bankName||null},account_number=${profile.bank?.accountNumber||null},account_holder=${profile.bank?.accountHolder||null},photo_url=${profile.photo||null},qris_photo_url=${profile.qrisPhoto||null} WHERE id=${user.id}`;
+      await sql`UPDATE users SET name=${String(profile.name||user.name).slice(0,100)},phone=${String(profile.phone||'').slice(0,40)},store_name=${user.role==='seller'?String(profile.storeName||'').trim().slice(0,100):user.storeName||''},bank_name=${profile.bank?.bankName||null},account_number=${profile.bank?.accountNumber||null},account_holder=${profile.bank?.accountHolder||null},photo_url=${profile.photo||null},qris_photo_url=${profile.qrisPhoto||null} WHERE id=${user.id}`;
     }
 
     if(user.role==='seller'||user.role==='admin')for(const m of rows(body.motors)){
