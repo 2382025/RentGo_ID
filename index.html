@@ -2473,25 +2473,36 @@ function openProfileModal(){
       document.getElementById('profilePhoto').onclick=()=>photoInput.click();
     }catch(error){toast(error.message,'error');}
   };
-  document.getElementById('saveProfileBtn').onclick=()=>{
+  document.getElementById('saveProfileBtn').onclick=async()=>{
     const name=document.getElementById('profName').value.trim();
     const phone=document.getElementById('profPhone').value.trim();
     if(!name){toast('Nama wajib diisi','error');return;}
-    u.name=name;u.phone=phone;u.photo=photoData;
+    let storeName='';
     if(u.role==='seller'){
-      const storeName=document.getElementById('profStoreName').value.trim();
+      storeName=document.getElementById('profStoreName').value.trim();
       if(storeName.length<2||storeName.length>100){toast('Nama toko harus 2–100 karakter','error');return;}
-      u.storeName=storeName;
-      const bankName=document.getElementById('profBankName').value;
-      const accountNumber=document.getElementById('profBankAccount').value.trim();
-      const accountHolder=document.getElementById('profBankHolder').value.trim();
-      if(bankName&&accountNumber&&accountHolder){
-        u.bank={bankName,accountNumber,accountHolder};
-      }
     }
-    state.currentUser=u;saveState();
-    toast('Profil berhasil disimpan','success');
-    overlay.remove();render();
+    const saveButton=document.getElementById('saveProfileBtn');
+    saveButton.disabled=true;saveButton.innerHTML='<i class="fa-solid fa-spinner fa-spin"></i> Menyimpan...';
+    try{
+      if(u.role==='seller'&&u.apiManaged)await apiRequest('/api/users',{method:'PATCH',body:JSON.stringify({id:u.id,storeName})});
+      u.name=name;u.phone=phone;u.photo=photoData;
+      if(u.role==='seller'){
+        u.storeName=storeName;
+        const bankName=document.getElementById('profBankName').value;
+        const accountNumber=document.getElementById('profBankAccount').value.trim();
+        const accountHolder=document.getElementById('profBankHolder').value.trim();
+        if(bankName&&accountNumber&&accountHolder){
+          u.bank={bankName,accountNumber,accountHolder};
+        }
+      }
+      state.currentUser=u;saveState();
+      toast('Profil berhasil disimpan','success');
+      overlay.remove();render();
+    }catch(error){
+      saveButton.disabled=false;saveButton.innerHTML='<i class="fa-solid fa-check"></i> Simpan';
+      toast(error.message,'error');
+    }
   };
   const resetPasswordBtn=document.getElementById('resetProfilePassword');
   if(resetPasswordBtn)resetPasswordBtn.onclick=async()=>{
