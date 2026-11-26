@@ -35,6 +35,8 @@ export default async function handler(req, res) {
       if(typeof motorId!=='string'||!Number.isInteger(value)||value<1||value>max)return json(res,400,{error:'Choose a duration from 1 to 24 hours or 1 to 30 days.'});
       const [motor]=await sql`SELECT id,seller_id,price_per_hour,price_per_day,is_open FROM motors WHERE id=${motorId}`;
       if(!motor||!motor.is_open)return json(res,404,{error:'Motor is unavailable.'});
+      const [existingRental]=await sql`SELECT id FROM rentals WHERE motor_id=${motor.id} AND status IN ('pending_payment','pending_verification','booked','active') LIMIT 1`;
+      if(existingRental)return json(res,409,{error:'This motor is already reserved or being rented.'});
       const id=`r_${randomBytes(16).toString('hex')}`;
       const amount=unit==='day'?value*Number(motor.price_per_day):value*Number(motor.price_per_hour);
       const [rental]=await sql`INSERT INTO rentals (id,motor_id,buyer_id,seller_id,duration_hours,duration_unit,duration_value,payment_method,total_price,status,payment_status) VALUES (${id},${motor.id},${user.id},${motor.seller_id},${hours},${unit},${value},${String(paymentMethod).slice(0,30)},${amount},'pending_payment','unpaid') RETURNING *`;

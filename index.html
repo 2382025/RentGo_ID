@@ -597,7 +597,7 @@ const DEFAULT_SETTINGS={
 };
 
 let state={
-  currentUser:null, users:[], motors:[], rentals:[], reviews:[],
+  currentUser:null, users:[], motors:[], rentals:[], reservedMotorIds:[], reviews:[],
   chats:[], notifications:[], 
   withdrawals:[],
   buyerTab:'browse', sellerTab:'dashboard', adminTab:'dashboard',
@@ -673,13 +673,13 @@ function applySettings(){
   PLATFORM_BANK.dueDate='Tanggal '+s.dueDay+' setiap bulan';
 }
 function loadState(){
-  state.users=[];state.motors=[];state.rentals=[];state.reviews=[];state.chats=[];state.notifications=[];
+  state.users=[];state.motors=[];state.rentals=[];state.reservedMotorIds=[];state.reviews=[];state.chats=[];state.notifications=[];
   state.commissionPayments=[];state.auditLogs=[];state.withdrawals=[];state.currentUser=null;state.settings=JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
   applySettings();
 }
 function clearAppData(){
   stateHydrated=false;lastSyncedState=null;state.currentUser=null;
-  state.users=[];state.motors=[];state.rentals=[];state.reviews=[];state.chats=[];state.notifications=[];state.commissionPayments=[];state.auditLogs=[];state.withdrawals=[];
+  state.users=[];state.motors=[];state.rentals=[];state.reservedMotorIds=[];state.reviews=[];state.chats=[];state.notifications=[];state.commissionPayments=[];state.auditLogs=[];state.withdrawals=[];
 }
 
 function uid(p='id'){ return p+'_'+Date.now()+'_'+Math.random().toString(36).slice(2,7); }
@@ -837,6 +837,7 @@ async function syncBackend(){
     state.currentUser=state.users.find(u=>u.id===userId)||{...state.currentUser,apiManaged:true};
     restoreRouteFromLocation(state.currentUser.role);
     state.motors=data.motors||[];state.rentals=data.rentals||[];state.reviews=data.reviews||[];
+    state.reservedMotorIds=data.reservedMotorIds||[];
     state.chats=data.chats||[];state.notifications=data.notifications||[];
     state.withdrawals=data.withdrawals||[];
     state.commissionPayments=data.commissionPayments||[];state.auditLogs=data.auditLogs||[];
@@ -869,10 +870,12 @@ async function refreshBackendData(){
     const next={
       users:(data.users||[]).map(u=>({...u,apiManaged:u.id===userId,bank:u.bank||(u.bankName?{bankName:u.bankName,accountNumber:u.accountNumber,accountHolder:u.accountHolder}:undefined)})),
       motors:data.motors||[],rentals:data.rentals||[],reviews:data.reviews||[],chats:data.chats||[],
+      reservedMotorIds:data.reservedMotorIds||[],
       notifications:data.notifications||[],withdrawals:data.withdrawals||[],commissionPayments:data.commissionPayments||[],
       auditLogs:data.auditLogs||[],settings:data.settings||JSON.parse(JSON.stringify(DEFAULT_SETTINGS))
     };
-    let changed=false;
+    let changed=JSON.stringify(state.reservedMotorIds)!==JSON.stringify(next.reservedMotorIds);
+    state.reservedMotorIds=next.reservedMotorIds;
     for(const key of persistentKeys){
       if(JSON.stringify(state[key])!==JSON.stringify(next[key]))changed=true;
       state[key]=next[key];
@@ -1170,10 +1173,8 @@ function renderBuyer(){
 }
 function renderBuyerBrowse(){
   const myActive=state.rentals.filter(r=>r.buyerId===state.currentUser.id&&(r.status==='booked'||r.status==='active'||r.status==='pending_verification'||r.status==='pending_payment'));
-  const available=state.motors.filter(m=>m.isOpen&&!m.adminBlocked&&!isUserSuspended(m.sellerId));
+  const available=state.motors.filter(m=>m.isOpen&&!m.adminBlocked&&!isUserSuspended(m.sellerId)&&!isMotorRented(m.id));
   let filtered=available;
-  if(state.filterStatus==='available')filtered=filtered.filter(m=>!isMotorRented(m.id));
-  else if(state.filterStatus==='rented')filtered=filtered.filter(m=>isMotorRented(m.id));
   if(state.searchQuery){
     const q=state.searchQuery.toLowerCase();
     filtered=filtered.filter(m=>m.name.toLowerCase().includes(q)||m.brand.toLowerCase().includes(q)||m.location.toLowerCase().includes(q));
@@ -1186,9 +1187,7 @@ function renderBuyerBrowse(){
     ${myActive.map(r=>renderActiveRentalBanner(r)).join('')}
     <div class="filter-bar">
       <div class="filter-tabs">
-        <button class="filter-tab ${state.filterStatus==='all'?'active':''}" data-filter="all">Semua</button>
-        <button class="filter-tab ${state.filterStatus==='available'?'active':''}" data-filter="available">Tersedia</button>
-        <button class="filter-tab ${state.filterStatus==='rented'?'active':''}" data-filter="rented">Disewa</button>
+        <button class="filter-tab active" type="button" disabled>Motor tersedia</button>
       </div>
       <div class="search-box"><i class="fa-solid fa-magnifying-glass"></i><input type="text" id="searchInput" placeholder="Cari motor, brand, lokasi..." value="${esc(state.searchQuery)}"></div>
     </div>
@@ -1334,7 +1333,7 @@ function renderBuyerHistory(){
   `;
 }
 function isMotorRented(motorId){
-  return state.rentals.some(r=>r.motorId===motorId&&(r.status==='active'||r.status==='booked'||r.status==='pending_payment'||r.status==='pending_verification'));
+  return state.reservedMotorIds.includes(motorId)||state.rentals.some(r=>r.motorId===motorId&&(r.status==='active'||r.status==='booked'||r.status==='pending_payment'||r.status==='pending_verification'));
 }
 
 /* ============================================================
